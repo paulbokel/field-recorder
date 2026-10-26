@@ -56,6 +56,7 @@ pio run -t upload
 - **Playback:** built-in speaker, ±10 s.
 - **Wi-Fi:** multiple saved networks joined in priority order, scan, password from your phone (QR → device hotspot → page) or the on-device letter wheel. 2.4 GHz only.
 - **Whisper:** OpenAI (`whisper-1`, summary and action items via `gpt-4o-mini`) or a self-hosted OpenAI-compatible server (for example faster-whisper-server/speaches). Long recordings are sent in 10-minute parts to stay under the 25 MB API limit.
+- **Mistral Voxtral (EU):** a third transcription service with speaker labels. Enter a Mistral API key and pick a model (default `voxtral-mini-latest`) under Settings → Whisper. Recordings go up in parts of up to 60 minutes. Paragraphs are labelled Speaker 1, Speaker 2; tap a speaker in the web interface to give it a name. Names show in the transcript, the TXT download and on the device, and summaries and reports use them.
 - **Local network:** the device's own access point at `http://192.168.4.1` (also `http://field.local` on your home network). Phones that join get a captive-portal popup.
 - **Web interface:** recordings (stream, download WAV and TXT, rename, delete, send), transcript and summary, remote recording, Wi-Fi, local network, Whisper and device settings.
 
@@ -76,4 +77,5 @@ pio run -t upload
 
 - TLS uses `setInsecure()` (no certificate check). Pin a root CA before shipping.
 - The access point shares the radio channel with your home Wi-Fi, so phones on the access point briefly drop when the device changes networks.
-- Whisper does not identify speakers. Transcript paragraphs are labelled with their timestamps.
+- Whisper (OpenAI or self-hosted) does not identify speakers. Mistral does, but only within one 60-minute part: in a longer recording the speakers of the next part get new numbers. Give them the same name to join them.
+- Mistral cannot fix the language while it labels speakers, so the language is then detected automatically.

@@ -24,7 +24,7 @@ static ScanNet pending;
 static struct { String text; int set = 0; int pos = 6; } kb;
 static char qrPurpose = 'w';
 static Screen progBack = S_SETTINGS, progNext = S_SETTINGS;
-static int readerPage = 0, readerMode = 0, readerModes = 2; static uint32_t readerFor = 0; static int readerBuilt = -1;   // mode 0 transcript, 1 summary, 2+ reports
+static int readerPage = 0, readerMode = 0, readerModes = 2; static uint32_t readerFor = 0, readerSeq = 0; static int readerBuilt = -1;   // mode 0 transcript, 1 summary, 2+ reports
 static std::vector<String> readerNames;
 struct PItem { String label; std::vector<String> lines; };
 static std::vector<std::vector<PItem>> pages;
@@ -104,7 +104,7 @@ static Menu buildMenu() {
     m.head = "Settings"; m.sub = String("FIRMWARE " FW_VERSION) + DOT + storageLine();
     m.rows.push_back(webRow());
     m.rows.push_back(row("wifi", "Wi-Fi", !gSet.wifiOn ? "OFF" : online ? upper(cs) : "NOT CONNECTED"));
-    m.rows.push_back(row("whisper", "Whisper", gSet.whOk ? String("CONNECTED") + DOT + (gSet.whSvc == 0 ? "OPENAI API" : "SELF-HOSTED") : String("NOT SET UP")));
+    m.rows.push_back(row("whisper", "Whisper", gSet.whOk ? String("CONNECTED") + DOT + (gSet.whSvc == 0 ? "OPENAI API" : gSet.whSvc == 2 ? "MISTRAL" : "SELF-HOSTED") : String("NOT SET UP")));
     m.rows.push_back(row("hotspot", "Local network", gSet.hsOn ? "ALWAYS ON" + String(DOT) + upper(gSet.hsName) : netApAuto() ? "ON WHILE OFFLINE" + String(DOT) + upper(gSet.hsName) : String("AUTOMATIC") + DOT + "ON WHEN OFFLINE"));
     m.rows.push_back(section("RECORDING"));
     MRow a = row("auto", "Send after recording", "TRANSCRIBE AUTOMATICALLY"); tog(a, gSet.autoSend); m.rows.push_back(a);
@@ -154,18 +154,19 @@ static Menu buildMenu() {
     m.rows.push_back(row("phone", "Type on phone", String("SCAN A CODE") + DOT + "EASIEST"));
     m.rows.push_back(row("here", "Type here", "PICK LETTERS WITH THE ROCKER"));
   } else if (scr == S_WHISPER) {
-    bool cred = gSet.whSvc == 0 ? gSet.whKey.length() : gSet.whServer.length();
+    bool cred = whHasCred(), srv = gSet.whSvc == 1;
     m.head = "Whisper";
-    m.sub = gSet.whOk ? String("CONNECTED") + DOT + "READY TO TRANSCRIBE" : cred ? String("NOT TESTED YET") + DOT + "RUN A TEST" : String("NOT SET UP") + DOT + (gSet.whSvc == 0 ? "NEEDS AN API KEY" : "NEEDS A SERVER ADDRESS");
-    m.rows.push_back(row("svc", "Service", gSet.whSvc == 0 ? "OPENAI WHISPER API" : "SELF-HOSTED WHISPER SERVER"));
-    MRow c = row("cred", gSet.whSvc == 0 ? "API key" : "Server", cred ? (gSet.whSvc == 0 ? maskKey(gSet.whKey) : upper(gSet.whServer)) : String("NOT SET") + DOT + "ADD WITH YOUR PHONE");
+    m.sub = gSet.whOk ? String("CONNECTED") + DOT + "READY TO TRANSCRIBE" : cred ? String("NOT TESTED YET") + DOT + "RUN A TEST" : String("NOT SET UP") + DOT + (srv ? "NEEDS A SERVER ADDRESS" : "NEEDS AN API KEY");
+    m.rows.push_back(row("svc", "Service", gSet.whSvc == 0 ? "OPENAI WHISPER API" : gSet.whSvc == 2 ? "MISTRAL VOXTRAL" + String(DOT) + "EU" : "SELF-HOSTED WHISPER SERVER"));
+    MRow c = row("cred", srv ? "Server" : "API key", cred ? (srv ? upper(gSet.whServer) : maskKey(whApiKey())) : String("NOT SET") + DOT + "ADD WITH YOUR PHONE");
     if (!cred) { c.tag = "SET UP"; c.tagLine = true; }
     m.rows.push_back(c);
     if (gSet.whSvc == 1) {
       m.rows.push_back(row("srvkey", "API key", gSet.whSrvKey.length() ? maskKey(gSet.whSrvKey) + DOT + "PUSH TO CHANGE" : String("OPTIONAL") + DOT + "ADD WITH YOUR PHONE"));
     }
-    m.rows.push_back(row("model", "Model", upper(whModelName()) + DOT + ((gSet.whSvc == 0 ? gSet.whOaModel : gSet.whSrvModel).length() ? "TYPED" : "DEFAULT") + DOT + "PUSH TO TYPE"));
-    m.rows.push_back(row("lang", "Language", LANG_NAMES[gSet.whLang]));
+    m.rows.push_back(row("model", "Model", upper(whModelName()) + DOT + (whModelTyped().length() ? "TYPED" : "DEFAULT") + DOT + "PUSH TO TYPE"));
+    if (gSet.whSvc == 2) { MRow s = row("spk", "Label speakers", gSet.whSpk ? "SPEAKER 1, 2" + String(DOT) + "NAME THEM IN THE WEB PAGE" : "OFF"); tog(s, gSet.whSpk); m.rows.push_back(s); }
+    m.rows.push_back(row("lang", "Language", whDiarize() ? String("DETECTED") + DOT + "WHILE LABELLING SPEAKERS" : String(LANG_NAMES[gSet.whLang])));
     m.rows.push_back(row("test", "Test connection", gSet.whOk ? "LAST TEST PASSED" : "SENDS A 2-SECOND SAMPLE"));
   } else if (scr == S_HOTSPOT) {
     bool on = gSet.hsOn || netApAuto();
@@ -246,13 +247,14 @@ static void menuAct(const String& id) {
     if (id == "here") { kb.text = ""; kb.set = 0; kb.pos = 6; scr = S_KEYBOARD; return; }
   }
   if (scr == S_WHISPER) {
-    if (id == "svc") { gSet.whSvc = 1 - gSet.whSvc; gSet.whOk = false; settingsSave(); return; }
+    if (id == "svc") { gSet.whSvc = (gSet.whSvc + 1) % 3; gSet.whOk = false; settingsSave(); return; }
+    if (id == "spk") { gSet.whSpk = !gSet.whSpk; settingsSave(); return; }
     if (id == "model") { if (!netOnline()) { uiToast("CONNECT TO WI-FI FIRST"); return go(S_WIFI); } return startQR('M'); }
     if (id == "lang") { gSet.whLang = (gSet.whLang + 1) % 5; settingsSave(); return; }
     if (id == "cred") { if (!netOnline()) { uiToast("CONNECT TO WI-FI FIRST"); return go(S_WIFI); } return startQR('k'); }
     if (id == "srvkey") { if (!netOnline()) { uiToast("CONNECT TO WI-FI FIRST"); return go(S_WIFI); } return startQR('K'); }
     if (id == "test") {
-      if (!(gSet.whSvc == 0 ? gSet.whKey.length() : gSet.whServer.length())) return uiToast(gSet.whSvc == 0 ? "ADD AN API KEY FIRST" : "ADD A SERVER FIRST");
+      if (!whHasCred()) return uiToast(gSet.whSvc == 1 ? "ADD A SERVER FIRST" : "ADD AN API KEY FIRST");
       return startTest();
     }
   }
@@ -324,7 +326,10 @@ static void buildPages(uint32_t id, int mode) {
       src.push_back({label, cont, plainMd(l)}); label = "";
     }
     if (src.empty()) src.push_back({"", "", "This report is empty."});
-  } else for (auto& s : t.segs) src.push_back({fmtDur(s.first), fmtDur(s.first), s.second});
+  } else for (size_t i = 0; i < t.segs.size(); i++) {
+    String n = speakerName(t, i), l = fmtDur(t.segs[i].first) + (n.length() ? String(DOT) + upper(n) : String());
+    src.push_back({l, l, t.segs[i].second});
+  }
   std::vector<PItem> page; int used = 0;
   for (auto& s : src) {
     auto lines = wrapText(s.text, F_SERIF_S, widthPx);
@@ -637,7 +642,7 @@ static void drawQR() {
   y += box + 22;
   String steps[2];
   if (qrPurpose == 'w') { steps[0] = "Scan this code with your phone camera. It joins " + gSet.hsName + "."; steps[1] = "Type the password for " + ph.ssid + " on the page that opens."; }
-  else { steps[0] = "Scan this code. Your phone must be on " + (netOnline() ? netSsid() : String("the same Wi-Fi")) + "."; steps[1] = qrPurpose == 'M' ? "Type the name of the model to use on the page that opens." : qrPurpose == 'K' ? "Paste the API key for your Whisper server on the page that opens." : gSet.whSvc == 0 ? "Paste your OpenAI API key on the page that opens." : "Type your Whisper server address on the page that opens."; }
+  else { steps[0] = "Scan this code. Your phone must be on " + (netOnline() ? netSsid() : String("the same Wi-Fi")) + "."; steps[1] = qrPurpose == 'M' ? "Type the name of the model to use on the page that opens." : qrPurpose == 'K' ? "Paste the API key for your Whisper server on the page that opens." : gSet.whSvc == 0 ? "Paste your OpenAI API key on the page that opens." : gSet.whSvc == 2 ? "Paste your Mistral API key on the page that opens." : "Type your Whisper server address on the page that opens."; }
   for (int i = 0; i < 2; i++) {
     drawText(36, y + 4, String(i + 1), F_MONO_M);
     for (auto& l : wrapText(steps[i], F_SERIF_S, W - 72 - 32)) { drawText(68, y, l, F_SERIF_S); y += textAsc(F_SERIF_S) + 12; }
@@ -647,7 +652,7 @@ static void drawQR() {
   drawText(36, by - textAsc(F_MONO_S) - 12, qrPurpose == 'w' ? String("OR OPEN HTTP://192.168.4.1") : "OR OPEN " + upper(deviceUrl()), F_MONO_S, 2);
   fillR(36, by, W - 72, 1);
   if (ph.phase >= 2) fillR(36, by + 15, 14, 14); else boxR(36, by + 15, 14, 14, 2);
-  String st = ph.phase == 0 ? String("WAITING FOR YOUR PHONE") : ph.phase == 1 ? String("PHONE CONNECTED") + DOT + "WAITING" : String(qrPurpose == 'w' ? "PASSWORD RECEIVED" : qrPurpose == 'M' ? "MODEL RECEIVED" : (qrPurpose == 'K' || gSet.whSvc == 0) ? "API KEY RECEIVED" : "ADDRESS RECEIVED");
+  String st = ph.phase == 0 ? String("WAITING FOR YOUR PHONE") : ph.phase == 1 ? String("PHONE CONNECTED") + DOT + "WAITING" : String(qrPurpose == 'w' ? "PASSWORD RECEIVED" : qrPurpose == 'M' ? "MODEL RECEIVED" : (qrPurpose == 'K' || gSet.whSvc != 1) ? "API KEY RECEIVED" : "ADDRESS RECEIVED");
   drawText(62, mid(by, 44, F_MONO_S), st, F_MONO_S, 2);
 }
 
@@ -757,14 +762,15 @@ static void drawSend() {
 static void drawProg() {
   Job j; { Guard g; j = gProg; }
   if (j.kind == 't') {
-    String sub = (gSet.whSvc == 0 ? String("OPENAI") : String("SELF-HOSTED")) + DOT + upper(whModelName());
-    drawSteps(j.done ? "Whisper is ready" : j.err.length() ? "Test failed" : "Testing Whisper", sub, {"Reach server", gSet.whSvc == 0 ? "Check API key" : "Check server", "Test transcription"}, j, false);
+    String sub = String(whSvcName()) + DOT + upper(whModelName());
+    drawSteps(j.done ? "Whisper is ready" : j.err.length() ? "Test failed" : "Testing Whisper", sub, {"Reach server", gSet.whSvc != 1 ? "Check API key" : "Check server", "Test transcription"}, j, false);
   } else drawSteps(j.done ? "Connected" : j.err.length() ? "Could not connect" : "Connecting", upper(j.ssid), {"Join network", "Get IP address", "Check internet"}, j, false);
 }
 
 static void drawReader() {
   Recording* r = cur(); if (!r) return;
-  if (readerFor != curId || readerBuilt != readerMode) { buildPages(curId, readerMode); readerFor = curId; readerBuilt = readerMode; }
+  uint32_t seq; { Guard g; seq = gRepSeq; }
+  if (readerFor != curId || readerBuilt != readerMode || readerSeq != seq) { buildPages(curId, readerMode); readerFor = curId; readerBuilt = readerMode; readerSeq = seq; }
   readerPage = min(readerPage, (int)pages.size() - 1);
   int y = BY + 22;
   String pl = String(readerPage + 1) + " / " + String(pages.size());
@@ -873,7 +879,7 @@ static void observe() {
   if (ph.active && ph.phase == 2 && scr == S_QR) {
     endQR();
     if (ph.purpose == 'w') startJoin(ph.ssid, ph.value, ph.sec, S_WIFIMETHOD);
-    else { { Guard g; if (ph.purpose == 'K') gSet.whSrvKey = ph.value; else if (ph.purpose == 'M') (gSet.whSvc == 0 ? gSet.whOaModel : gSet.whSrvModel) = ph.value; else if (gSet.whSvc == 0) gSet.whKey = ph.value; else gSet.whServer = ph.value; gSet.whOk = false; } settingsSave(); startTest(); }
+    else { { Guard g; if (ph.purpose == 'K') gSet.whSrvKey = ph.value; else if (ph.purpose == 'M') whModelTyped() = ph.value; else if (gSet.whSvc != 1) whApiKey() = ph.value; else gSet.whServer = ph.value; gSet.whOk = false; } settingsSave(); startTest(); }
   }
 }
 

@@ -17,8 +17,14 @@ String randomPw() {
 }
 String whModelName() {
   if (gSet.whSvc == 0) return gSet.whOaModel.length() ? gSet.whOaModel : String(OPENAI_STT_MODEL);
+  if (gSet.whSvc == 2) return gSet.whMiModel.length() ? gSet.whMiModel : String(MISTRAL_STT_MODEL);
   return gSet.whSrvModel.length() ? gSet.whSrvModel : String(SELF_MODELS[gSet.whModel % 3]);
 }
+String& whModelTyped() { return gSet.whSvc == 0 ? gSet.whOaModel : gSet.whSvc == 2 ? gSet.whMiModel : gSet.whSrvModel; }
+String& whApiKey() { return gSet.whSvc == 0 ? gSet.whKey : gSet.whSvc == 2 ? gSet.whMiKey : gSet.whSrvKey; }
+bool whHasCred() { return gSet.whSvc == 1 ? gSet.whServer.length() > 0 : whApiKey().length() > 0; }
+bool whDiarize() { return gSet.whSvc == 2 && gSet.whSpk; }
+const char* whSvcName() { return gSet.whSvc == 0 ? "OPENAI" : gSet.whSvc == 2 ? "MISTRAL" : "SELF-HOSTED"; }
 String deviceUrl() { return "http://" + deviceName() + ".local"; }
 String maskKey(const String& k) {
   if (k.length() < 10) return k.length() ? "SET" : "";
@@ -43,6 +49,7 @@ void settingsLoad() {
   gSet.whSrvKey = P.getString("whSrvKey", "");
   gSet.whOaModel = P.getString("whOaModel", "");
   gSet.whSrvModel = P.getString("whSrvModel", "");
+  gSet.whMiKey = P.getString("whMiKey", ""); gSet.whMiModel = P.getString("whMiModel", ""); gSet.whSpk = P.getBool("whSpk", true);
   gSet.aiUrl = P.getString("aiUrl", ""); gSet.aiKey = P.getString("aiKey", ""); gSet.aiModel = P.getString("aiModel", "");
   gSet.whModel = P.getUChar("whModel", 0);
   gSet.whLang = P.getUChar("whLang", 0);
@@ -63,6 +70,7 @@ void settingsSave() {
   P.putBool("wifiOn", gSet.wifiOn); P.putString("nets", s);
   P.putBool("hsOn", gSet.hsOn); P.putString("hsName", gSet.hsName); P.putString("hsPw", gSet.hsPw);
   P.putUChar("whSvc", gSet.whSvc); P.putString("whKey", gSet.whKey); P.putString("whServer", gSet.whServer); P.putString("whSrvKey", gSet.whSrvKey); P.putString("whOaModel", gSet.whOaModel); P.putString("whSrvModel", gSet.whSrvModel);
+  P.putString("whMiKey", gSet.whMiKey); P.putString("whMiModel", gSet.whMiModel); P.putBool("whSpk", gSet.whSpk);
   P.putString("aiUrl", gSet.aiUrl); P.putString("aiKey", gSet.aiKey); P.putString("aiModel", gSet.aiModel);
   P.putUChar("whModel", gSet.whModel); P.putUChar("whLang", gSet.whLang); P.putBool("whOk", gSet.whOk);
   P.putBool("auto", gSet.autoSend); P.putUShort("fullEvery", gSet.fullEvery); P.putUShort("sleepMin", gSet.sleepMin); P.putUChar("vol2", gSet.volume);
