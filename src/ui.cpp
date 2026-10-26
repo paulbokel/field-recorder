@@ -24,7 +24,7 @@ static ScanNet pending;
 static struct { String text; int set = 0; int pos = 6; } kb;
 static char qrPurpose = 'w';
 static Screen progBack = S_SETTINGS, progNext = S_SETTINGS;
-static int readerPage = 0, readerMode = 0, readerModes = 2; static uint32_t readerFor = 0; static int readerBuilt = -1;   // mode 0 transcript, 1 summary, 2+ reports
+static int readerPage = 0, readerMode = 0, readerModes = 2; static uint32_t readerFor = 0, readerSeq = 0; static int readerBuilt = -1;   // mode 0 transcript, 1 summary, 2+ reports
 static std::vector<String> readerNames;
 struct PItem { String label; std::vector<String> lines; };
 static std::vector<std::vector<PItem>> pages;
@@ -769,7 +769,8 @@ static void drawProg() {
 
 static void drawReader() {
   Recording* r = cur(); if (!r) return;
-  if (readerFor != curId || readerBuilt != readerMode) { buildPages(curId, readerMode); readerFor = curId; readerBuilt = readerMode; }
+  uint32_t seq; { Guard g; seq = gRepSeq; }
+  if (readerFor != curId || readerBuilt != readerMode || readerSeq != seq) { buildPages(curId, readerMode); readerFor = curId; readerBuilt = readerMode; readerSeq = seq; }
   readerPage = min(readerPage, (int)pages.size() - 1);
   int y = BY + 22;
   String pl = String(readerPage + 1) + " / " + String(pages.size());

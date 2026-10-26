@@ -180,7 +180,7 @@ bool netCheckInternet();
 // ---- jobs.cpp (transcription, Wi-Fi join, Whisper test)
 struct Job { bool running = false, done = false; char kind = 0; uint32_t id = 0; int step = 0, pct = 0; String err, det[4], toast, ssid; };
 extern Job gSend, gProg, gRep;   // gRep: report generation (ssid = type id, det[0] = type name)
-extern uint32_t gRepSeq;          // bumps whenever a report is written
+extern uint32_t gRepSeq;          // bumps whenever a report is written or a speaker is named
 bool reportStart(uint32_t id, const String& type);
 String aiRoot(); String aiModelName(); bool aiReady();   // gProg.kind: 'j' join, 't' Whisper test
 bool sendStart(uint32_t id);

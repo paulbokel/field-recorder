@@ -148,6 +148,7 @@ static void hSpeaker() {
   if (n < 1 || n > (int)t.names.size()) return fail("UNKNOWN SPEAKER");
   t.names[n - 1] = name.substring(0, 40);
   if (!storageSaveTranscript(id, t)) return fail("COULD NOT SAVE");
+  { Guard g; gRepSeq++; }   // open transcripts (device reader, other browsers) reload
   uiPoke(); ok();
 }
 static void hDelete() {
