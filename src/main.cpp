@@ -1,5 +1,6 @@
 #include "app.h"
 #include <time.h>
+#include <esp_sleep.h>
 
 SemaphoreHandle_t gLock;
 PhoneSetup gPhone;
@@ -23,11 +24,14 @@ bool clockValid() { return time(nullptr) > 1700000000; }
 void setup() {
   Serial.begin(115200);
   Serial.setTxTimeoutMs(0);
-  for (uint32_t t0 = millis(); !Serial && millis() - t0 < 2500;) delay(10);   // let USB CDC attach so the boot log is visible
-  delay(300);
+  if (esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_TIMER) {   // a charger check from deep sleep must be quick
+    for (uint32_t t0 = millis(); !Serial && millis() - t0 < 2500;) delay(10);   // let USB CDC attach so the boot log is visible
+    delay(300);
+  }
   Serial.printf("\n[boot] Field Recorder %s\n", FW_VERSION);
   gLock = xSemaphoreCreateRecursiveMutex();
   boardBegin();
+  powerWakeCheck();
   settingsLoad();
   setenv("TZ", TZ_INFO, 1); tzset();
   rtcToSystem();

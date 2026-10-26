@@ -32,6 +32,7 @@ void boardPowerOff();           // PMIC cuts all power; PWR switches the device 
 // ---- power.cpp
 void powerActivity();           // a person used the device (rocker, web page in front)
 uint32_t powerIdleMs();
+void powerWakeCheck();          // right after boardBegin(): timer wake without a charger sleeps on
 void powerBootCheck();
 void powerLoop();
 [[noreturn]] void powerSleep(char why);   // 'S' idle, 'B' battery empty
@@ -57,7 +58,7 @@ struct Settings {
   bool wifiOn = true; std::vector<SavedNet> nets;
   bool hsOn = false; String hsName, hsPw;
   uint8_t whSvc = 0; String whKey, whServer, whSrvKey, whOaModel, whSrvModel; uint8_t whModel = 0, whLang = 0; bool whOk = false;
-  bool autoSend = false; uint16_t fullEvery = 30; uint16_t sleepMin = SLEEP_MIN_DEFAULT; bool awakeUsb = true; uint8_t volume = 100; uint32_t nextId = 1;
+  bool autoSend = false; uint16_t fullEvery = 30; uint16_t sleepMin = SLEEP_MIN_DEFAULT; uint8_t volume = 100; uint32_t nextId = 1;
 };
 extern Settings gSet;
 void settingsLoad();

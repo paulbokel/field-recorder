@@ -186,8 +186,7 @@ function vDevice(){const d=S.dev,u=d.total?Math.round(d.used/d.total*100):0;
   return '<div style="max-width:720px"><div class="h1">Device</div><div class="c12" style="margin-top:10px">ESP32-S3-EPAPER-3.97 · FIRMWARE '+esc(S.fw)+'</div>'+
   '<div class="sec">RECORDING</div><div class="row"><div style="flex:1"><div class="rt">Send after recording</div><div class="rs">TRANSCRIBE AUTOMATICALLY WHEN WI-FI AND WHISPER ARE READY</div></div>'+tg(d.auto,'auto')+'</div>'+
   '<div class="row"><div style="flex:1 1 260px"><div class="rt">Speaker volume</div><div class="rs">BUILT-IN SPEAKER</div></div><input type="range" min="0" max="100" step="5" value="'+d.vol+'" data-in="vol" style="width:180px;accent-color:#141414"></div>'+
-  '<div class="sec">POWER</div><div class="row"><div style="flex:1 1 260px"><div class="rt">Sleep after</div><div class="rs">WITHOUT USE · ANY ROCKER DIRECTION WAKES IT · NOT WHILE RECORDING OR SENDING</div></div><select class="in" data-in="sleepMin" style="flex:0 1 200px">'+[2,5,10,15,30,60,0].map(m=>'<option value="'+m+'"'+(d.sleepMin===m?' selected':'')+'>'+(m?m+' minutes':'Never')+'</option>').join('')+'</select></div>'+
-  '<div class="row"><div style="flex:1"><div class="rt">Stay awake on USB power</div><div class="rs">KEEPS THE WEB INTERFACE REACHABLE WHILE CHARGING</div></div>'+tg(d.awakeUsb,'awakeUsb')+'</div>'+
+  '<div class="sec">POWER</div><div class="row"><div style="flex:1 1 260px"><div class="rt">Sleep after</div><div class="rs">WITHOUT USE · NEVER WHILE ON A CHARGER, RECORDING OR SENDING · A ROCKER PRESS OR PLUGGING IN WAKES IT</div></div><select class="in" data-in="sleepMin" style="flex:0 1 200px">'+[2,5,10,15,30,60,0].map(m=>'<option value="'+m+'"'+(d.sleepMin===m?' selected':'')+'>'+(m?m+' minutes':'Never')+'</option>').join('')+'</select></div>'+
   '<div class="row"><div style="flex:1"><div class="rt">Battery</div><div class="rs">'+(d.batt>=0?d.batt+'% · '+(d.mv/1000).toFixed(2)+' V':'NO BATTERY FOUND')+(d.usb?' · ON USB POWER'+(d.batt>=0&&d.batt<100?', CHARGING':''):' · ON BATTERY')+'</div></div></div>'+
   '<div class="sec">DISPLAY</div><div class="row"><div style="flex:1 1 260px"><div class="rt">Full refresh</div><div class="rs">AFTER THIS MANY PARTIAL UPDATES, ON THE NEXT SCREEN CHANGE</div></div><div style="display:flex;align-items:center;border:2px solid var(--ink)"><button data-a="full" data-d="-5" style="width:36px;height:32px;background:none;border:0;border-right:2px solid var(--ink);cursor:pointer">−</button><span style="width:56px;text-align:center;font-size:15px">'+d.fullEvery+'</span><button data-a="full" data-d="5" style="width:36px;height:32px;background:none;border:0;border-left:2px solid var(--ink);cursor:pointer">+</button></div></div>'+
   '<div class="row"><div style="flex:1"><div class="rt">Clear screen now</div><div class="rs">REMOVES GHOSTING · '+d.partials+' PARTIAL · '+d.fulls+' FULL SINCE BOOT</div></div><button class="btn sm" data-a="clear">CLEAR</button></div>'+
@@ -311,7 +310,6 @@ document.addEventListener('click',e=>{const b=e.target.closest('[data-a]');if(!b
   case 'showKey':showKey=!showKey;render(true);break;
   case 'test':act('/api/whisper/test',{});break;
   case 'auto':act('/api/device',{auto:!S.dev.auto});break;
-  case 'awakeUsb':act('/api/device',{awakeUsb:!S.dev.awakeUsb});break;
   case 'full':act('/api/device',{fullEvery:Math.max(5,Math.min(200,S.dev.fullEvery+(+b.dataset.d)))});break;
   case 'clear':act('/api/device/clear',{},'SCREEN CLEARED ON THE DEVICE');break;
   case 'otaCheck':act('/api/ota/check',{});break;

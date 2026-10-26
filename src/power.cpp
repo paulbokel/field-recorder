@@ -6,7 +6,7 @@
 
 // Power management
 //  * deep sleep after `sleepMin` minutes without use (not while recording, playing, sending or writing a report;
-//    optionally never while on USB power). Any rocker direction wakes the device (it then boots normally).
+//    never while on USB power). Any rocker direction wakes the device (it then boots normally).
 //  * the device's own fallback network switches off after a few idle minutes when nobody is connected to it.
 //  * low battery: warning toasts, and a clean shutdown (recording saved) before the cell is drained.
 // The e-paper keeps the sleep screen without power, so the device shows what happened.
@@ -46,15 +46,31 @@ static void park(char why) {
   esp_deep_sleep_start();
 }
 
-// Deep sleep until a rocker press.
-[[noreturn]] void powerSleep(char why) {
-  park(why);
+// Deep sleep until a rocker press, or until a charger is plugged in: the device then wakes every
+// USB_POLL_S seconds for a fraction of a second, sees no USB power and sleeps on (powerWakeCheck()).
+static const uint32_t USB_POLL_S = 60;
+[[noreturn]] static void deepSleep() {
   const uint64_t mask = (1ULL << PIN_BTN_UP) | (1ULL << PIN_BTN_PUSH) | (1ULL << PIN_BTN_DOWN);
   for (int p : {PIN_BTN_UP, PIN_BTN_PUSH, PIN_BTN_DOWN}) { rtc_gpio_init((gpio_num_t)p); rtc_gpio_set_direction((gpio_num_t)p, RTC_GPIO_MODE_INPUT_ONLY); rtc_gpio_pullup_en((gpio_num_t)p); rtc_gpio_pulldown_dis((gpio_num_t)p); }
   esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);   // keeps the pull-ups alive
   esp_sleep_enable_ext1_wakeup(mask, ESP_EXT1_WAKEUP_ANY_LOW);
+  esp_sleep_enable_timer_wakeup((uint64_t)USB_POLL_S * 1000000ULL);
   Serial.flush(); delay(50);
   esp_deep_sleep_start();
+}
+
+[[noreturn]] void powerSleep(char why) {
+  park(why);
+  deepSleep();
+}
+
+// Called right after boardBegin(), before the display is touched: a timer wake without a charger
+// goes straight back to sleep and leaves the sleep screen as it is.
+void powerWakeCheck() {
+  if (esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_TIMER) return;
+  if (boardVbus()) { Serial.println("[power] charger connected, waking up"); return; }
+  boardSleepRails();
+  deepSleep();
 }
 
 // Called early in setup(): never start Wi-Fi on an empty cell.
@@ -73,7 +89,7 @@ void powerLoop() {
   if (now - lastKey >= 200) {
     lastKey = now;
     char k = boardPwrKey();
-    if (k == 'L') powerOff();
+    if (k == 'L') { if (boardVbus()) uiToast("ON CHARGER \xC2\xB7 STAYS ON"); else powerOff(); }
     if (k == 'S') { powerActivity(); uiToast("HOLD PWR TO SWITCH OFF"); }
   }
   if (now - last < 2000) return; last = now;
@@ -94,6 +110,7 @@ void powerLoop() {
   netSetApAllowed(usb || powerIdleMs() < AP_IDLE_MS || netApClients() > 0);
 
   // sleep after inactivity
-  uint16_t mins; bool awakeUsb; { Guard g; mins = gSet.sleepMin; awakeUsb = gSet.awakeUsb; }
-  if (mins && !(usb && awakeUsb) && !busy() && powerIdleMs() > (uint32_t)mins * 60000UL) powerSleep('S');
+  // sleep after inactivity; never while on a charger
+  uint16_t mins; { Guard g; mins = gSet.sleepMin; }
+  if (mins && !usb && !busy() && powerIdleMs() > (uint32_t)mins * 60000UL) powerSleep('S');
 }

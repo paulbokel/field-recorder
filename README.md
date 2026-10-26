@@ -26,9 +26,9 @@ Switching an older device (one app slot) to this layout needs one USB flash of b
 
 ## Power
 
-- Sleeps after the time set under *Settings → Sleep after* (not while recording, sending or updating). The screen then shows **ASLEEP**; any rocker direction wakes it.
-- **Hold PWR for 1.5 s** to switch off: the recording is saved, the screen shows **OFF**, and the power chip cuts the power. Press PWR to switch on. Holding PWR for 10 s forces the power off.
-- On an empty battery the screen shows **EMPTY** and the device shuts down cleanly.
+- **On a charger it never sleeps or switches off.** On battery it sleeps after the time set under *Settings → Sleep after* (not while recording, sending or updating). The screen then shows **ASLEEP**; any rocker direction wakes it, and so does plugging in a charger (checked once a minute).
+- **Hold PWR for 1.5 s** to switch off (on battery only; on a charger it says *ON CHARGER · STAYS ON*): the recording is saved, the screen shows **OFF**, and the power chip cuts the power. Press PWR to switch on. Holding PWR for 10 s forces the power off in hardware, also on a charger.
+- On an empty battery the screen shows **EMPTY** and the device shuts down cleanly. It starts again by itself once it is on a charger.
 
 ## Check before first run
 

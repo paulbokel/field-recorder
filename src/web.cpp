@@ -37,7 +37,7 @@ static void hState() {
   d["ota"]["checking"] = gUpd.checking; d["ota"]["installing"] = gUpd.installing; d["ota"]["avail"] = gUpd.avail; d["ota"]["latest"] = gUpd.latest;
   d["ota"]["notes"] = gUpd.notes; d["ota"]["err"] = gUpd.err; d["ota"]["checked"] = gUpd.checkedAt; d["ota"]["pct"] = gUpd.pct;
   JsonObject dev = d["dev"].to<JsonObject>();
-  dev["auto"] = gSet.autoSend; dev["fullEvery"] = gSet.fullEvery; dev["batt"] = batteryPercent(); dev["usb"] = boardVbus(); dev["mv"] = batteryMv(); dev["sleepMin"] = gSet.sleepMin; dev["awakeUsb"] = gSet.awakeUsb; dev["vol"] = gSet.volume;
+  dev["auto"] = gSet.autoSend; dev["fullEvery"] = gSet.fullEvery; dev["batt"] = batteryPercent(); dev["usb"] = boardVbus(); dev["mv"] = batteryMv(); dev["sleepMin"] = gSet.sleepMin; dev["vol"] = gSet.volume;
   dev["used"] = (double)storageUsed(); dev["total"] = (double)storageTotal(); dev["sd"] = gSdOk; dev["partials"] = gPartials; dev["fulls"] = gFulls;
   JsonObject w = d["wifi"].to<JsonObject>();
   w["on"] = gSet.wifiOn; w["connected"] = ssid; w["ip"] = ip; w["scanning"] = netScanning();
@@ -222,7 +222,6 @@ static void hDevice() {
   JsonDocument d; if (!body(d)) return fail("BAD JSON");
   if (d["auto"].is<bool>()) gSet.autoSend = d["auto"];
   if (d["sleepMin"].is<int>()) gSet.sleepMin = constrain(d["sleepMin"].as<int>(), 0, 240);
-  if (d["awakeUsb"].is<bool>()) gSet.awakeUsb = d["awakeUsb"];
   if (d["fullEvery"].is<int>()) gSet.fullEvery = constrain(d["fullEvery"].as<int>(), 5, 200);
   if (d["vol"].is<int>()) { gSet.volume = constrain(d["vol"].as<int>(), 0, 100); audioSetVolume(gSet.volume); }
   settingsSave(); uiPoke(); ok();

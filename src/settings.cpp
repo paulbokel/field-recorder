@@ -49,7 +49,7 @@ void settingsLoad() {
   gSet.whOk = P.getBool("whOk", false);
   gSet.autoSend = P.getBool("auto", false);
   gSet.fullEvery = P.getUShort("fullEvery", 30);
-  gSet.sleepMin = P.getUShort("sleepMin", SLEEP_MIN_DEFAULT); gSet.awakeUsb = P.getBool("awakeUsb", true);
+  gSet.sleepMin = P.getUShort("sleepMin", SLEEP_MIN_DEFAULT);
   gSet.volume = P.getUChar("vol2", 100);
   gSet.nextId = P.getULong("nextId", 1);
   if (gSet.hsPw.length() < 8) { gSet.hsPw = randomPw(); P.putString("hsPw", gSet.hsPw); }
@@ -65,6 +65,6 @@ void settingsSave() {
   P.putUChar("whSvc", gSet.whSvc); P.putString("whKey", gSet.whKey); P.putString("whServer", gSet.whServer); P.putString("whSrvKey", gSet.whSrvKey); P.putString("whOaModel", gSet.whOaModel); P.putString("whSrvModel", gSet.whSrvModel);
   P.putString("aiUrl", gSet.aiUrl); P.putString("aiKey", gSet.aiKey); P.putString("aiModel", gSet.aiModel);
   P.putUChar("whModel", gSet.whModel); P.putUChar("whLang", gSet.whLang); P.putBool("whOk", gSet.whOk);
-  P.putBool("auto", gSet.autoSend); P.putUShort("fullEvery", gSet.fullEvery); P.putUShort("sleepMin", gSet.sleepMin); P.putBool("awakeUsb", gSet.awakeUsb); P.putUChar("vol2", gSet.volume);
+  P.putBool("auto", gSet.autoSend); P.putUShort("fullEvery", gSet.fullEvery); P.putUShort("sleepMin", gSet.sleepMin); P.putUChar("vol2", gSet.volume);
   P.putULong("nextId", gSet.nextId);
 }

@@ -111,7 +111,7 @@ static Menu buildMenu() {
     m.rows.push_back(row("full", "Clear screen", "FULL REFRESH, REMOVES GHOSTING"));
     m.rows.push_back(section("POWER"));
     int bp = batteryPercent(); bool usb = boardVbus();
-    m.rows.push_back(row("sleep", "Sleep after", (gSet.sleepMin ? String(gSet.sleepMin) + " MIN WITHOUT USE" : String("NEVER")) + (gSet.awakeUsb ? String(DOT) + "NOT ON USB" : String())));
+    m.rows.push_back(row("sleep", "Sleep after", (gSet.sleepMin ? String(gSet.sleepMin) + " MIN WITHOUT USE" : String("NEVER")) + String(DOT) + "NOT ON CHARGER"));
     m.rows.push_back(row("batt", "Battery", (bp >= 0 ? String(bp) + "%" : String("NO BATTERY")) + (usb ? String(DOT) + (bp >= 0 && bp < 100 ? "CHARGING" : "USB POWER") : String())));
     m.rows.push_back(section("FIRMWARE"));
     if (gUpd.avail) { MRow u = row("update", "Update to " + gUpd.latest, "PUSH TO INSTALL" + String(DOT) + "NOW " FW_VERSION); u.tag = "NEW"; u.tagFill = true; m.rows.push_back(u); }
@@ -904,7 +904,7 @@ void uiSleepScreen(char why) {
   int la = textAsc(F_SERIF_XL), ty = BY + BH - 44 - 136 + (136 - (la + 16 + textAsc(F_MONO_S))) / 2;
   marker(22, ty + la / 2);
   drawText(72, ty, b ? "Charge" : o ? "Press PWR" : "Push", F_SERIF_XL);
-  drawText(72, ty + la + 16, b ? "THEN PUSH TO START" : o ? "TO SWITCH IT ON AGAIN" : "ANY DIRECTION WAKES IT", F_MONO_S, 2, W - 72 - 32);
+  drawText(72, ty + la + 16, b ? "IT STARTS BY ITSELF ON THE CHARGER" : o ? "TO SWITCH IT ON AGAIN" : "ANY DIRECTION OR A CHARGER WAKES IT", F_MONO_S, 2, W - 72 - 32);
   drawHints({b ? "CHARGE FIRST" : o ? "PWR SWITCHES ON" : "PUSH TO WAKE"});
   dispRequestFull(b ? "EMPTY" : o ? "OFF" : "SLEEP");
   dispCommit(true);
