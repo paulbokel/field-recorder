@@ -50,7 +50,8 @@ static void hState() {
   d["client"] = server.client().remoteIP().toString();
   JsonObject wh = d["wh"].to<JsonObject>();
   wh["svc"] = gSet.whSvc; wh["keySet"] = gSet.whKey.length() > 0; wh["keyHint"] = maskKey(gSet.whKey); wh["server"] = gSet.whServer; wh["srvKeySet"] = gSet.whSrvKey.length() > 0; wh["srvKeyHint"] = maskKey(gSet.whSrvKey);
-  wh["model"] = gSet.whModel; wh["modelName"] = whModelName(); wh["modelTyped"] = gSet.whSvc == 0 ? gSet.whOaModel : gSet.whSrvModel; wh["lang"] = gSet.whLang; wh["ok"] = gSet.whOk;
+  wh["miKeySet"] = gSet.whMiKey.length() > 0; wh["miKeyHint"] = maskKey(gSet.whMiKey); wh["spk"] = gSet.whSpk;
+  wh["model"] = gSet.whModel; wh["modelName"] = whModelName(); wh["modelTyped"] = whModelTyped(); wh["lang"] = gSet.whLang; wh["ok"] = gSet.whOk;
   JsonObject r = d["rec"].to<JsonObject>();
   r["active"] = rl.active; r["paused"] = rl.paused; r["t"] = rl.t; r["id"] = rl.id;
   JsonArray rm = r["marks"].to<JsonArray>(); for (auto x : rl.marks) rm.add(x);
@@ -71,7 +72,9 @@ static void hRec() {
   JsonDocument d; recJson(d.to<JsonObject>(), r);
   Transcript t;
   if (r.status == REC_DONE && storageLoadTranscript(r.id, t)) {
-    JsonArray s = d["segs"].to<JsonArray>(); for (auto& x : t.segs) { JsonArray a = s.add<JsonArray>(); a.add(x.first); a.add(x.second); }
+    JsonArray s = d["segs"].to<JsonArray>();
+    for (size_t i = 0; i < t.segs.size(); i++) { JsonArray a = s.add<JsonArray>(); a.add(t.segs[i].first); a.add(t.segs[i].second); a.add(i < t.spk.size() ? t.spk[i] : 0); }
+    if (t.spk.size()) { JsonArray n = d["names"].to<JsonArray>(); for (size_t i = 0; i < t.names.size(); i++) n.add(t.names[i]); }
     JsonArray su = d["sum"].to<JsonArray>(); for (auto& x : t.sum) su.add(x);
     JsonArray ac = d["act"].to<JsonArray>(); for (auto& x : t.act) ac.add(x);
   }
@@ -124,7 +127,8 @@ static void hText() {
   String s = r.title + "\n" + fmtStamp(r.ts) + " \xC2\xB7 " + fmtDur(r.dur) + "\n\nSUMMARY\n";
   for (auto& x : t.sum) s += "- " + x + "\n";
   s += "\nACTION ITEMS\n"; for (auto& x : t.act) s += "- " + x + "\n";
-  s += "\nTRANSCRIPT\n"; for (auto& x : t.segs) s += fmtDur(x.first) + "\n" + x.second + "\n\n";
+  s += "\nTRANSCRIPT\n";
+  for (size_t i = 0; i < t.segs.size(); i++) { String n = speakerName(t, i); s += fmtDur(t.segs[i].first) + (n.length() ? " \xC2\xB7 " + n : String()) + "\n" + t.segs[i].second + "\n\n"; }
   server.sendHeader("Content-Disposition", "attachment; filename=\"" + safeName(id) + ".txt\"");
   server.send(200, "text/plain; charset=utf-8", s);
 }
@@ -134,6 +138,17 @@ static void hRename() {
   String t = d["title"] | ""; t.trim(); if (!t.length()) return fail("EMPTY TITLE");
   Guard g; Recording* r = recFind(pid()); if (!r) return fail("NOT FOUND", 404);
   r->title = t.substring(0, 80); storageSaveMeta(*r); uiPoke(); ok();
+}
+// name a speaker of a transcript: {"n": 2, "name": "Paul"} ("" = back to "Speaker 2")
+static void hSpeaker() {
+  JsonDocument d; if (!body(d)) return fail("BAD JSON");
+  uint32_t id = pid(); int n = d["n"] | 0; String name = d["name"] | ""; name.trim();
+  { Guard g; if (gSend.running && gSend.id == id) return fail("SENDING"); }
+  Transcript t; if (!storageLoadTranscript(id, t)) return fail("NO TRANSCRIPT", 404);
+  if (n < 1 || n > (int)t.names.size()) return fail("UNKNOWN SPEAKER");
+  t.names[n - 1] = name.substring(0, 40);
+  if (!storageSaveTranscript(id, t)) return fail("COULD NOT SAVE");
+  uiPoke(); ok();
 }
 static void hDelete() {
   uint32_t id = pid();
@@ -202,9 +217,11 @@ static void hWhisper() {
   JsonDocument d; if (!body(d)) return fail("BAD JSON");
   {
     Guard g;
-    if (d["svc"].is<int>()) { gSet.whSvc = d["svc"].as<int>() ? 1 : 0; gSet.whOk = false; }
+    if (d["svc"].is<int>()) { gSet.whSvc = constrain(d["svc"].as<int>(), 0, 2); gSet.whOk = false; }
     if (d["key"].is<const char*>()) { gSet.whKey = d["key"].as<String>(); gSet.whKey.trim(); gSet.whOk = false; }
-    if (d["modelName"].is<const char*>()) { String m = d["modelName"].as<String>(); m.trim(); (gSet.whSvc == 0 ? gSet.whOaModel : gSet.whSrvModel) = m.substring(0, 80); gSet.whOk = false; }
+    if (d["modelName"].is<const char*>()) { String m = d["modelName"].as<String>(); m.trim(); whModelTyped() = m.substring(0, 80); gSet.whOk = false; }
+    if (d["miKey"].is<const char*>()) { gSet.whMiKey = d["miKey"].as<String>(); gSet.whMiKey.trim(); gSet.whOk = false; }
+    if (d["spk"].is<bool>()) gSet.whSpk = d["spk"];
     if (d["srvKey"].is<const char*>()) { gSet.whSrvKey = d["srvKey"].as<String>(); gSet.whSrvKey.trim(); gSet.whOk = false; }
     if (d["server"].is<const char*>()) { gSet.whServer = d["server"].as<String>(); gSet.whServer.trim(); gSet.whOk = false; }
     if (d["model"].is<int>()) { gSet.whModel = constrain(d["model"].as<int>(), 0, 2); gSet.whOk = false; }
@@ -213,7 +230,7 @@ static void hWhisper() {
   settingsSave(); uiPoke(); ok();
 }
 static void hWhisperTest() {
-  if (gSet.whSvc == 0 ? !gSet.whKey.length() : !gSet.whServer.length()) return fail(gSet.whSvc == 0 ? "ENTER AN API KEY FIRST" : "ENTER A SERVER ADDRESS FIRST");
+  if (!whHasCred()) return fail(gSet.whSvc == 1 ? "ENTER A SERVER ADDRESS FIRST" : "ENTER AN API KEY FIRST");
   if (!whisperTestStart()) return fail("BUSY");
   uiPoke(); ok();
 }
@@ -360,6 +377,7 @@ void webBegin() {
   on(UriBraces("/api/rec/{}/rename"), HTTP_POST, hRename);
   on(UriBraces("/api/rec/{}/delete"), HTTP_POST, hDelete);
   on(UriBraces("/api/rec/{}/send"), HTTP_POST, hSend);
+  on(UriBraces("/api/rec/{}/speaker"), HTTP_POST, hSpeaker);
   on(UriBraces("/api/rec/{}/report"), HTTP_POST, hRecReport);
   on(UriBraces("/api/rec/{}/report/delete"), HTTP_POST, hRecReportDelete);
   on(UriBraces("/api/rec/{}/rtype"), HTTP_POST, hRecType);

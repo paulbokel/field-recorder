@@ -51,13 +51,15 @@ bool otaInstallStart();         // download and install gUpd.latest (background)
 
 // ---- settings.cpp
 struct SavedNet { String ssid, pw, sec; };
-// whSrvKey: optional API key for a self-hosted Whisper server
-// whOaModel / whSrvModel: model typed by the user per service ("" = default)
+// whSvc: 0 OpenAI, 1 self-hosted Whisper server, 2 Mistral Voxtral
+// whSrvKey: optional API key for a self-hosted Whisper server; whMiKey: Mistral API key
+// whOaModel / whSrvModel / whMiModel: model typed by the user per service ("" = default)
+// whSpk: Mistral labels speakers (the language is then detected, Mistral cannot combine both)
 struct Settings {
   String aiUrl, aiKey, aiModel;   // AI for summaries and reports ("" = OpenAI, Whisper key, gpt-4o-mini)
   bool wifiOn = true; std::vector<SavedNet> nets;
   bool hsOn = false; String hsName, hsPw;
-  uint8_t whSvc = 0; String whKey, whServer, whSrvKey, whOaModel, whSrvModel; uint8_t whModel = 0, whLang = 0; bool whOk = false;
+  uint8_t whSvc = 0; String whKey, whServer, whSrvKey, whOaModel, whSrvModel, whMiKey, whMiModel; uint8_t whModel = 0, whLang = 0; bool whOk = false, whSpk = true;
   bool autoSend = false; uint16_t fullEvery = 30; uint16_t sleepMin = SLEEP_MIN_DEFAULT; uint8_t volume = 100; uint32_t nextId = 1;
 };
 extern Settings gSet;
@@ -65,7 +67,12 @@ void settingsLoad();
 void settingsSave();
 String randomPw();
 String deviceName();
-String whModelName();   // model sent to the current Whisper service   // "field-9fbc": mDNS + DHCP hostname, unique per device
+String whModelName();   // model sent to the current Whisper service
+String& whModelTyped(); // the typed model of the current service (under Guard)
+String& whApiKey();     // the API key of the current service (under Guard)
+bool whHasCred();       // key (OpenAI, Mistral) or server address (self-hosted) is set
+bool whDiarize();       // the current service labels speakers
+const char* whSvcName();   // "OPENAI", "SELF-HOSTED", "MISTRAL"   // "field-9fbc": mDNS + DHCP hostname, unique per device
 String deviceUrl();    // "http://field-9fbc.local"
 String maskKey(const String& k);
 
@@ -73,7 +80,10 @@ String maskKey(const String& k);
 enum RecStatus : uint8_t { REC_LOCAL = 0, REC_SENDING = 1, REC_DONE = 2 };
 struct Recording { uint32_t id = 0; String title; uint32_t ts = 0, dur = 0; std::vector<uint32_t> marks; uint8_t status = REC_LOCAL;
                    String rtype; };   // report type for this recording: "" = the default, "none" = no report
-struct Transcript { std::vector<std::pair<uint32_t, String>> segs; std::vector<String> sum, act; };
+// spk: speaker per paragraph (0 = unknown, 1..n), empty when the service does not label speakers.
+// names: name given to speaker n at names[n-1] ("" = not named yet).
+struct Transcript { std::vector<std::pair<uint32_t, String>> segs; std::vector<String> sum, act; std::vector<uint8_t> spk; std::vector<String> names; };
+String speakerName(const Transcript& t, size_t seg);   // "" when that paragraph has no speaker
 extern std::vector<Recording> gRecs;   // newest first
 extern fs::FS* gFS;
 extern fs::FS* gCfgFS;   // internal flash (FFat) for configuration; falls back to gFS

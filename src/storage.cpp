@@ -88,16 +88,26 @@ bool storageLoadTranscript(uint32_t id, Transcript& t) {
   t = Transcript();
   File f = gFS->open(trPath(id)); if (!f) return false;
   JsonDocument d; DeserializationError e = deserializeJson(d, f); f.close(); if (e) return false;
-  for (JsonArray s : d["segs"].as<JsonArray>()) t.segs.push_back({s[0].as<uint32_t>(), s[1].as<String>()});
+  bool spk = false;
+  for (JsonArray s : d["segs"].as<JsonArray>()) { t.segs.push_back({s[0].as<uint32_t>(), s[1].as<String>()}); t.spk.push_back(s[2] | 0); if (s[2] | 0) spk = true; }
+  if (!spk) t.spk.clear();
+  for (JsonVariant v : d["names"].as<JsonArray>()) t.names.push_back(v.as<String>());
   for (JsonVariant v : d["sum"].as<JsonArray>()) t.sum.push_back(v.as<String>());
   for (JsonVariant v : d["act"].as<JsonArray>()) t.act.push_back(v.as<String>());
   return true;
 }
 
+String speakerName(const Transcript& t, size_t seg) {
+  uint8_t n = seg < t.spk.size() ? t.spk[seg] : 0;
+  if (!n) return "";
+  return n <= t.names.size() && t.names[n - 1].length() ? t.names[n - 1] : "Speaker " + String(n);
+}
+
 bool storageSaveTranscript(uint32_t id, const Transcript& t) {
   JsonDocument d;
   JsonArray s = d["segs"].to<JsonArray>();
-  for (auto& x : t.segs) { JsonArray a = s.add<JsonArray>(); a.add(x.first); a.add(x.second); }
+  for (size_t i = 0; i < t.segs.size(); i++) { JsonArray a = s.add<JsonArray>(); a.add(t.segs[i].first); a.add(t.segs[i].second); if (i < t.spk.size() && t.spk[i]) a.add(t.spk[i]); }
+  if (t.names.size()) { JsonArray n = d["names"].to<JsonArray>(); for (auto& x : t.names) n.add(x); }
   JsonArray su = d["sum"].to<JsonArray>(); for (auto& x : t.sum) su.add(x);
   JsonArray ac = d["act"].to<JsonArray>(); for (auto& x : t.act) ac.add(x);
   File f = gFS->open(trPath(id), FILE_WRITE); if (!f) return false;

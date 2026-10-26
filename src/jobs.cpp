@@ -3,17 +3,20 @@
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <algorithm>
+#include <memory>
 
 Job gSend, gProg, gRep;
 uint32_t gRepSeq = 0;
 
-struct WhCfg { uint8_t svc, model, lang; String key, server, modelName; };
-static WhCfg snap() { Guard g; return {gSet.whSvc, gSet.whModel, gSet.whLang, gSet.whSvc == 0 ? gSet.whKey : gSet.whSrvKey, gSet.whServer, whModelName()}; }
+struct WhCfg { uint8_t svc, model, lang; String key, server, modelName; bool diarize; };
+static WhCfg snap() { Guard g; return {gSet.whSvc, gSet.whModel, gSet.whLang, whApiKey(), gSet.whServer, whModelName(), whDiarize()}; }
 
 static const char* SUMMARY_PROMPT =
   "You summarise meeting and voice-memo transcripts. Reply with JSON only: "
   "{\"summary\":[3-6 short factual sentences],\"actions\":[\"Owner: task\", ...]}. "
-  "Use the transcript's language. Use an empty actions array when there are none.";
+  "Use the transcript's language. Use an empty actions array when there are none. "
+  "Paragraphs may start with the speaker's name; use those names as owners.";
 
 // multipart body = head | WAV header | audio bytes (file range or memory) | tail
 class BodyStream : public Stream {
@@ -46,6 +49,7 @@ class BodyStream : public Stream {
 // Accepts "host:9000", "http://host:9000", ".../v1", ".../v1/audio/transcriptions" (with or without trailing slash).
 static String apiRoot(const WhCfg& c) {          // e.g. http://host:9000/v1
   if (c.svc == 0) return OPENAI_BASE "/v1";
+  if (c.svc == 2) return MISTRAL_BASE "/v1";
   String s = c.server; s.trim();
   if (s.indexOf("://") < 0) s = "http://" + s;
   while (s.endsWith("/")) s.remove(s.length() - 1);
@@ -71,20 +75,73 @@ static int httpDo(const String& url, const WhCfg& c, std::function<int(HTTPClien
   return code;
 }
 
+// POST a streamed body and wait up to STT_WAIT_MS for the reply. HTTPClient gives up after 65 s
+// without data, too short for Mistral working through a part of up to an hour.
+#define STT_WAIT_MS 600000
+static int rawPost(const String& url, const String& key, const String& type, BodyStream& bs, String& resp) {
+  int hs = url.indexOf("://") + 3, ps = url.indexOf('/', hs);
+  String host = url.substring(hs, ps < 0 ? url.length() : ps), path = ps < 0 ? "/" : url.substring(ps);
+  WiFiClientSecure cl; cl.setInsecure();   // TODO: pin a root CA for production
+  cl.setTimeout(30000);   // ms, for each read of the reply
+  if (!cl.connect(host.c_str(), 443)) { resp = "connection failed"; return -1; }
+  String h = "POST " + path + " HTTP/1.1\r\nHost: " + host + "\r\nUser-Agent: FieldRecorder/" FW_VERSION "\r\nConnection: close\r\n"
+             "Content-Type: " + type + "\r\nContent-Length: " + String(bs.total) + "\r\n";
+  if (key.length()) h += "Authorization: Bearer " + key + "\r\n";
+  h += "\r\n";
+  if (cl.print(h) != h.length()) { resp = "send failed"; return -1; }
+  std::unique_ptr<char[]> mem(new char[4096]); char* buf = mem.get(); const size_t bufN = 4096;
+  while (bs.pos < bs.total) {
+    size_t n = bs.readBytes(buf, bufN);
+    if (!n) { resp = "audio read failed"; return -1; }
+    for (size_t o = 0; o < n;) { size_t w = cl.write((const uint8_t*)buf + o, n - o); if (!w) { resp = "upload interrupted"; return -1; } o += w; }
+  }
+  uint32_t t0 = millis();
+  while (!cl.available()) {
+    if (!cl.connected()) { resp = "connection closed"; return -1; }
+    if (millis() - t0 > STT_WAIT_MS) { resp = "no reply"; return -11; }
+    vTaskDelay(pdMS_TO_TICKS(200));
+  }
+  String line = cl.readStringUntil('\n');   // HTTP/1.1 200 OK
+  int code = line.substring(line.indexOf(' ') + 1).toInt();
+  long len = -1; bool chunked = false;
+  for (;;) {
+    line = cl.readStringUntil('\n'); line.trim();
+    if (!line.length()) break;
+    String l = line; l.toLowerCase();
+    if (l.startsWith("content-length:")) len = l.substring(15).toInt();
+    if (l.startsWith("transfer-encoding:") && l.indexOf("chunked") >= 0) chunked = true;
+  }
+  resp = "";
+  auto take = [&](long n) { while (n > 0 && (cl.connected() || cl.available())) { int r = cl.readBytes(buf, min((long)bufN, n)); if (r <= 0) break; resp.concat(buf, r); n -= r; } };
+  if (chunked) for (;;) { line = cl.readStringUntil('\n'); long n = strtol(line.c_str(), nullptr, 16); if (n <= 0) break; take(n); cl.readStringUntil('\n'); }
+  else if (len >= 0) take(len);
+  else while (cl.connected() || cl.available()) { int r = cl.readBytes(buf, bufN); if (r <= 0) break; resp.concat(buf, r); }
+  cl.stop();
+  return code > 0 ? code : -1;
+}
+
 static int postAudio(const WhCfg& c, File* f, uint32_t off, uint32_t len, const uint8_t* mem,
                      std::function<void(size_t, size_t)> prog, String& resp) {
   String bnd = "----field" + String(esp_random(), HEX);
   BodyStream bs;
   auto field = [&](const char* name, const String& v) { bs.head += "--" + bnd + "\r\nContent-Disposition: form-data; name=\"" + name + "\"\r\n\r\n" + v + "\r\n"; };
   field("model", c.modelName);
-  // gpt-4o(-mini)-transcribe only answer plain json (no segments); whisper-style models give timestamps
-  field("response_format", c.modelName.startsWith("gpt-") ? "json" : "verbose_json");
-  if (c.lang) field("language", LANG_CODES[c.lang]);
+  if (c.svc == 2) {
+    // Mistral: segment timestamps (needed for speakers) cannot be combined with a fixed language
+    if (c.diarize) field("diarize", "true");
+    if (c.diarize || !c.lang) field("timestamp_granularities", "segment");
+    else field("language", LANG_CODES[c.lang]);
+  } else {
+    // gpt-4o(-mini)-transcribe only answer plain json (no segments); whisper-style models give timestamps
+    field("response_format", c.modelName.startsWith("gpt-") ? "json" : "verbose_json");
+    if (c.lang) field("language", LANG_CODES[c.lang]);
+  }
   bs.head += "--" + bnd + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\r\nContent-Type: audio/wav\r\n\r\n";
   bs.tail = "\r\n--" + bnd + "--\r\n";
   wavHeader(bs.wav, len); bs.f = f; bs.mem = mem; bs.len = len;
   if (f) f->seek(off);
   bs.init(); bs.onProg = prog;
+  if (c.svc == 2) return rawPost(sttUrl(c), c.key, "multipart/form-data; boundary=" + bnd, bs, resp);
   return httpDo(sttUrl(c), c, [&](HTTPClient& h) {
     h.addHeader("Content-Type", "multipart/form-data; boundary=" + bnd);
     return h.sendRequest("POST", &bs, bs.total);
@@ -106,6 +163,7 @@ static String serverMsg(const String& resp) {
 }
 static String httpErr(int code, const String& resp) {
   if (code > 0) Serial.printf("[whisper] HTTP %d: %s\n", code, resp.substring(0, 600).c_str());
+  if (code == -11) return "NO REPLY FROM SERVER \xC2\xB7 TRY AGAIN";
   if (code <= 0) return "SERVER NOT REACHABLE";
   String m = serverMsg(resp);
   if (code == 401 || code == 403) return m.length() ? "KEY NOT ACCEPTED \xC2\xB7 " + upper(m) : "API KEY NOT ACCEPTED";
@@ -113,21 +171,32 @@ static String httpErr(int code, const String& resp) {
   return "ERROR " + String(code) + (m.length() ? " \xC2\xB7 " + upper(m) : String());
 }
 
-static bool parseStt(const String& resp, uint32_t offset, Transcript& t) {
-  JsonDocument filter; filter["text"] = true; filter["segments"][0]["start"] = true; filter["segments"][0]["text"] = true;
+// part: which upload this reply belongs to. Speaker labels only hold within one part, so the
+// same label in another part becomes a new speaker number (naming both the same joins them).
+// ids: "part:label" per speaker number, shared by all parts of one recording.
+static bool parseStt(const String& resp, uint32_t offset, uint32_t part, Transcript& t, std::vector<String>& ids) {
+  JsonDocument filter; filter["text"] = true; filter["segments"][0]["start"] = true; filter["segments"][0]["text"] = true; filter["segments"][0]["speaker_id"] = true;
   JsonDocument d;
   if (deserializeJson(d, resp, DeserializationOption::Filter(filter))) return false;
+  auto push = [&](uint32_t at, const String& tx, uint8_t sp) { t.segs.push_back({at, tx}); t.spk.push_back(sp); };
   JsonArray segs = d["segments"];
-  if (segs.isNull() || !segs.size()) { String tx = d["text"] | ""; tx.trim(); if (tx.length()) t.segs.push_back({offset, tx}); return !d["text"].isNull(); }
-  uint32_t ps = 0; String para; bool open = false;
-  for (JsonObject s : segs) {   // merge Whisper segments into ~30 s paragraphs
+  if (segs.isNull() || !segs.size()) { String tx = d["text"] | ""; tx.trim(); if (tx.length()) push(offset, tx, 0); return !d["text"].isNull(); }
+  uint32_t ps = 0; String para; bool open = false; uint8_t psp = 0;
+  for (JsonObject s : segs) {   // merge segments into ~30 s paragraphs, and start a new one when the speaker changes
     uint32_t st = offset + (uint32_t)s["start"].as<float>();
     String tx = s["text"].as<String>(); tx.trim(); if (!tx.length()) continue;
-    if (!open) { ps = st; para = tx; open = true; }
-    else if (st - ps >= 30 || para.length() > 420) { t.segs.push_back({ps, para}); ps = st; para = tx; }
+    uint8_t sp = 0; String lab = s["speaker_id"] | "";
+    if (lab.length()) {
+      String key = String(part) + ":" + lab; size_t i = 0;
+      while (i < ids.size() && ids[i] != key) i++;
+      if (i == ids.size() && ids.size() < 250) ids.push_back(key);
+      sp = i < ids.size() ? i + 1 : 0;
+    }
+    if (!open) { ps = st; para = tx; psp = sp; open = true; }
+    else if (sp != psp || st - ps >= 30 || para.length() > 420) { push(ps, para, psp); ps = st; para = tx; psp = sp; }
     else { para += " "; para += tx; }
   }
-  if (open) t.segs.push_back({ps, para});
+  if (open) push(ps, para, psp);
   return true;
 }
 
@@ -180,7 +249,8 @@ static String aiChat(const String& system, const String& user, bool json, String
 }
 
 static String transcriptText(const Transcript& t) {
-  String text; for (auto& s : t.segs) text += "[" + fmtDur(s.first) + "] " + s.second + "\n";
+  String text;
+  for (size_t i = 0; i < t.segs.size(); i++) { String n = speakerName(t, i); text += "[" + fmtDur(t.segs[i].first) + "] " + (n.length() ? n + ": " : String()) + t.segs[i].second + "\n"; }
   return text;
 }
 
@@ -245,9 +315,9 @@ static void runSend() {
   File f = gFS->open(recWavPath(id));
   if (!f) return fail("AUDIO FILE MISSING");
   uint32_t data = f.size() > 44 ? (f.size() - 44) & ~1u : 0;
-  const uint32_t chunk = CHUNK_SECONDS * SAMPLE_RATE * 2;
+  const uint32_t secs = c.svc == 2 ? MISTRAL_CHUNK_SECONDS : CHUNK_SECONDS, chunk = secs * SAMPLE_RATE * 2;
   uint32_t n = max(1u, (unsigned)((data + chunk - 1) / chunk));
-  Transcript t;
+  Transcript t; std::vector<String> ids;
   for (uint32_t k = 0; k < n; k++) {
     uint32_t off = 44 + k * chunk, len = min(chunk, data - k * chunk);
     { Guard g; gSend.step = 1; gSend.det[1] = n > 1 ? "PART " + String(k + 1) + " OF " + String(n) : ""; }
@@ -259,9 +329,11 @@ static void runSend() {
       if (p >= tot && gSend.step == 1) { gSend.step = 2; uiPoke(); }
     }, resp);
     if (code != 200) { f.close(); return fail(httpErr(code, resp)); }
-    if (!parseStt(resp, k * CHUNK_SECONDS, t)) { f.close(); return fail("UNEXPECTED REPLY"); }
+    if (!parseStt(resp, k * secs, k, t, ids)) { f.close(); return fail("UNEXPECTED REPLY"); }
   }
   f.close();
+  if (std::all_of(t.spk.begin(), t.spk.end(), [](uint8_t s) { return s == 0; })) t.spk.clear();
+  else t.names.assign(ids.size(), "");
   { Guard g; gSend.det[1] = String(data / 1000000.0f, 1) + " MB"; gSend.det[2] = upper(c.modelName); }
   step(3);
   String sErr = aiReady() ? summarise(t) : String("SKIPPED \xC2\xB7 NO AI SET UP");
@@ -331,19 +403,20 @@ static void testTask(void*) {
     IPAddress ip;
     if (!netOnline()) { fail("NO INTERNET \xC2\xB7 CHECK WI-FI"); break; }
     if (c.svc == 1 && !c.server.length()) { fail("NO SERVER ADDRESS"); break; }
+    if (c.svc != 1 && !c.key.length()) { fail("NO API KEY"); break; }
     String host = hostOf(c); int colon = host.indexOf(':'); if (colon >= 0) host = host.substring(0, colon);
     if (!WiFi.hostByName(host.c_str(), ip)) { fail("SERVER NOT FOUND"); break; }
     step(1, upper(hostOf(c)));
     String resp;
     int code = httpDo(apiRoot(c) + "/models", c, [](HTTPClient& h) { return h.GET(); }, resp);
-    if (code == 401 || code == 403) { fail(c.svc == 0 || c.key.length() ? httpErr(code, resp) : String("SERVER NEEDS AN API KEY")); break; }
-    if (code <= 0 || (c.svc == 0 && code != 200)) { fail(httpErr(code, resp)); break; }
+    if (code == 401 || code == 403) { fail(c.svc != 1 || c.key.length() ? httpErr(code, resp) : String("SERVER NEEDS AN API KEY")); break; }
+    if (code <= 0 || (c.svc != 1 && code != 200)) { fail(httpErr(code, resp)); break; }
     if (code == 200) {   // does the server know the model? (servers that can load models on demand may not list it)
       JsonDocument f; f["data"][0]["id"] = true; JsonDocument d;
       if (!deserializeJson(d, resp, DeserializationOption::Filter(f))) {
         JsonArray a = d["data"]; bool found = false; String hint;
         for (JsonVariant v : a) { String id = v["id"] | ""; if (id == c.modelName) found = true;
-          String l = id; l.toLowerCase(); if (!hint.length() && (l.indexOf("whisper") >= 0 || l.indexOf("transcribe") >= 0)) hint = id; }
+          String l = id; l.toLowerCase(); if (!hint.length() && (l.indexOf("whisper") >= 0 || l.indexOf("transcribe") >= 0 || l.indexOf("voxtral") >= 0)) hint = id; }
         Serial.printf("[whisper] %u models on server, '%s' %s\n", (unsigned)a.size(), c.modelName.c_str(), found ? "listed" : "not listed");
         if (a.size() && !found && c.svc == 0) { fail("MODEL " + upper(c.modelName) + " NOT AVAILABLE"); break; }
         if (a.size() && !found && hint.length()) { Guard g; gProg.det[1] = "MODEL NOT LISTED \xC2\xB7 SERVER HAS " + upper(hint); }

@@ -66,3 +66,8 @@
 #define OPENAI_STT_MODEL     "whisper-1"
 #define OPENAI_SUMMARY_MODEL "gpt-4o-mini"
 #define CHUNK_SECONDS        600   // 16 kHz WAV: 10 min ≈ 19 MB, under the 25 MB API limit
+
+// Mistral Voxtral (EU): transcription with speaker labels
+#define MISTRAL_BASE         "https://api.mistral.ai"
+#define MISTRAL_STT_MODEL    "voxtral-mini-latest"
+#define MISTRAL_CHUNK_SECONDS 3600 // Mistral takes up to 60 min (500 MB) per request; speakers stay consistent within one part
