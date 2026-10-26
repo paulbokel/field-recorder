@@ -198,6 +198,7 @@ function vDevice(){const d=S.dev,u=d.total?Math.round(d.used/d.total*100):0;
   '<div class="row"><div style="flex:1 1 260px"><div class="rt">Speaker volume</div><div class="rs">BUILT-IN SPEAKER</div></div><input type="range" min="0" max="100" step="5" value="'+d.vol+'" data-in="vol" style="width:180px;accent-color:#141414"></div>'+
   '<div class="sec">POWER</div><div class="row"><div style="flex:1 1 260px"><div class="rt">Sleep after</div><div class="rs">WITHOUT USE · NEVER WHILE ON A CHARGER, RECORDING OR SENDING · A ROCKER PRESS OR PLUGGING IN WAKES IT</div></div><select class="in" data-in="sleepMin" style="flex:0 1 200px">'+[2,5,10,15,30,60,0].map(m=>'<option value="'+m+'"'+(d.sleepMin===m?' selected':'')+'>'+(m?m+' minutes':'Never')+'</option>').join('')+'</select></div>'+
   '<div class="row"><div style="flex:1"><div class="rt">Battery</div><div class="rs">'+(d.batt>=0?d.batt+'% · '+(d.mv/1000).toFixed(2)+' V':'NO BATTERY FOUND')+(d.usb?' · ON USB POWER'+(d.batt>=0&&d.batt<100?', CHARGING':''):' · ON BATTERY')+'</div></div></div>'+
+  '<div class="sec">SECURITY</div><div class="row"><div style="flex:1 1 260px"><div class="rt">Start-up PIN</div><div class="rs">'+(d.pinOn?'ON · 4 DIGITS, ENTERED WITH THE ROCKER WHEN IT IS SWITCHED ON':'OFF · TYPE 4 DIGITS TO TURN IT ON')+'</div></div><input class="in" type="password" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" autocomplete="off" placeholder="'+(d.pinOn?'New PIN':'PIN')+'" data-in="pin" style="flex:0 1 120px">'+(d.pinOn?tg(true,'pinOff'):'')+'</div>'+
   '<div class="sec">DISPLAY</div><div class="row"><div style="flex:1 1 260px"><div class="rt">Full refresh</div><div class="rs">AFTER THIS MANY PARTIAL UPDATES, ON THE NEXT SCREEN CHANGE</div></div><div style="display:flex;align-items:center;border:2px solid var(--ink)"><button data-a="full" data-d="-5" style="width:36px;height:32px;background:none;border:0;border-right:2px solid var(--ink);cursor:pointer">−</button><span style="width:56px;text-align:center;font-size:15px">'+d.fullEvery+'</span><button data-a="full" data-d="5" style="width:36px;height:32px;background:none;border:0;border-left:2px solid var(--ink);cursor:pointer">+</button></div></div>'+
   '<div class="row"><div style="flex:1"><div class="rt">Clear screen now</div><div class="rs">REMOVES GHOSTING · '+d.partials+' PARTIAL · '+d.fulls+' FULL SINCE BOOT</div></div><button class="btn sm" data-a="clear">CLEAR</button></div>'+
   '<div class="sec">STORAGE</div><div style="padding:16px 0;border-bottom:1px solid var(--ink)"><div class="c12" style="display:flex;justify-content:space-between"><span>'+(d.used/1e9).toFixed(2)+' OF '+(d.total/1e9).toFixed(1)+' GB USED · '+(d.sd?'SD CARD':'INTERNAL FLASH')+'</span><span>'+S.recs.length+' RECORDINGS</span></div><div class="bar" style="margin-top:10px"><i style="width:'+u+'%"></i></div></div>'+
@@ -320,6 +321,7 @@ document.addEventListener('click',e=>{const b=e.target.closest('[data-a]');if(!b
   case 'showKey':showKey=!showKey;render(true);break;
   case 'test':act('/api/whisper/test',{});break;
   case 'auto':act('/api/device',{auto:!S.dev.auto});break;
+  case 'pinOff':if(confirm('Turn off the start-up PIN? Anyone can then switch the device on.'))act('/api/device',{pin:''},'PIN OFF');break;
   case 'full':act('/api/device',{fullEvery:Math.max(5,Math.min(200,S.dev.fullEvery+(+b.dataset.d)))});break;
   case 'clear':act('/api/device/clear',{},'SCREEN CLEARED ON THE DEVICE');break;
   case 'otaCheck':act('/api/ota/check',{});break;
@@ -368,6 +370,7 @@ document.addEventListener('change',e=>{const el=e.target.closest('[data-in]');if
   else if(k==='server')act('/api/whisper',{server:v.trim()},'SERVER SAVED');
   else if(k==='model'||k==='lang')act('/api/whisper',{[k]:+v});
   else if(k==='vol')act('/api/device',{vol:+v});
+  else if(k==='pin'){if(/^[0-9]{4}$/.test(v))act('/api/device',{pin:v},'PIN SET · ASKED AT START').then(()=>el.value='');else if(v)toast('PIN MUST BE 4 DIGITS')}
   else if(k==='sleepMin')act('/api/device',{sleepMin:+v},+v?'SLEEPS AFTER '+v+' MIN':'NEVER SLEEPS');
   else if(k==='repSel'){repSel=v;render(true)}
   else if(k==='recType'&&r)act('/api/rec/'+r.id+'/rtype',{type:v},v===''?'USES THE DEFAULT':v==='none'?'NO REPORT':'REPORT TYPE: '+rtName(v).toUpperCase()).then(()=>{repSel=null;render(true)});

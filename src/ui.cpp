@@ -1,5 +1,6 @@
 #include "app.h"
 #include <WiFi.h>
+#include <esp_system.h>
 #if __has_include("qrcode.h")
 extern "C" {
 #include "qrcode.h"
@@ -9,7 +10,7 @@ extern "C" {
 
 // Screens and behaviour mirror "Field Recorder v2" (device design).
 enum Screen : uint8_t { S_HOME, S_SETTINGS, S_WIFI, S_WIFINET, S_WIFISCAN, S_WIFIMETHOD, S_WHISPER, S_HOTSPOT,
-                        S_KEYBOARD, S_QR, S_PROG, S_RECORD, S_LIBRARY, S_DETAIL, S_PLAYER, S_SEND, S_READER, S_COUNT };
+                        S_KEYBOARD, S_QR, S_PROG, S_RECORD, S_LIBRARY, S_DETAIL, S_PLAYER, S_SEND, S_READER, S_PIN, S_COUNT };
 enum Key : uint8_t { K_UP, K_DOWN, K_PUSH, K_HOLD, K_POKE };
 
 static const int W = 480, BY = 48, BH = 704, HY = 752;
@@ -30,6 +31,8 @@ struct PItem { String label; std::vector<String> lines; };
 static std::vector<std::vector<PItem>> pages;
 static String toastMsg; static uint32_t toastUntil = 0;
 static bool wasRecActive = false; static uint32_t lastMinute = 0;
+struct PinPad { uint8_t d[4] = {0}; int pos = 0, stage = 0; String first; };   // stage 0 new PIN, 1 repeat it
+static PinPad pin;
 
 static const char* DAY[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
 static const char* DAYL[] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
@@ -113,6 +116,9 @@ static Menu buildMenu() {
     int bp = batteryPercent(); bool usb = boardVbus();
     m.rows.push_back(row("sleep", "Sleep after", (gSet.sleepMin ? String(gSet.sleepMin) + " MIN WITHOUT USE" : String("NEVER")) + String(DOT) + "NOT ON CHARGER"));
     m.rows.push_back(row("batt", "Battery", (bp >= 0 ? String(bp) + "%" : String("NO BATTERY")) + (usb ? String(DOT) + (bp >= 0 && bp < 100 ? "CHARGING" : "USB POWER") : String())));
+    m.rows.push_back(section("SECURITY"));
+    MRow pr = row("pin", "Start-up PIN", gSet.pinOn ? String("4 DIGITS") + DOT + "ASKED WHEN SWITCHED ON" : String("NO PIN NEEDED TO START")); tog(pr, gSet.pinOn); m.rows.push_back(pr);
+    if (gSet.pinOn) m.rows.push_back(row("pinchg", "Change PIN", "ENTER A NEW 4-DIGIT PIN"));
     m.rows.push_back(section("FIRMWARE"));
     if (gUpd.avail) { MRow u = row("update", "Update to " + gUpd.latest, "PUSH TO INSTALL" + String(DOT) + "NOW " FW_VERSION); u.tag = "NEW"; u.tagFill = true; m.rows.push_back(u); }
     else m.rows.push_back(row("update", "Check for update", String("VERSION " FW_VERSION) + DOT + (gUpd.checking ? String("CHECKING\xE2\x80\xA6") : gUpd.err.length() ? gUpd.err : gUpd.checkedAt ? String("UP TO DATE") : String("NOT CHECKED YET"))));
@@ -216,6 +222,8 @@ static void menuAct(const String& id) {
     if (id == "full") return dispRequestFull("MANUAL");
     if (id == "sleep") { static const uint16_t S[] = {2, 5, 10, 15, 30, 60, 0}; int i = 0; while (i < 6 && S[i] != gSet.sleepMin) i++; gSet.sleepMin = S[(i + 1) % 7]; settingsSave(); return uiToast(gSet.sleepMin ? "SLEEPS AFTER " + String(gSet.sleepMin) + " MIN" : String("NEVER SLEEPS")); }
     if (id == "batt") return;
+    if (id == "pin" && gSet.pinOn) { dlg = Dialog(); dlg.on = true; dlg.title = "Turn off the PIN?"; dlg.sub = "ANYONE CAN SWITCH IT ON"; dlg.yes = "Turn off"; dlg.action = 'p'; return; }
+    if (id == "pin" || id == "pinchg") { pin = PinPad(); scr = S_PIN; return; }
     if (id == "update") {
       if (!gUpd.avail) { if (!otaCheckStart() && gUpd.err.length()) uiToast(gUpd.err); return; }
       dlg = Dialog(); dlg.on = true; dlg.title = "Install " + gUpd.latest + "?"; dlg.sub = "RESTARTS WHEN DONE" + String(DOT) + "ABOUT 1 MIN"; dlg.yes = "Install"; dlg.action = 'u'; return;
@@ -275,6 +283,8 @@ static void dialogAct() {
     settingsSave();
     if (netSsid() == ssid) netDisconnect();
     uiToast("NETWORK FORGOTTEN"); scr = S_WIFI;
+  } else if (dlg.action == 'p') {
+    { Guard g; gSet.pinOn = false; gSet.pin = ""; } settingsSave(); uiToast("PIN OFF");
   } else if (dlg.action == 'u') {
     if (!otaInstallStart()) { Guard g; uiToast(gUpd.err); }
   }
@@ -388,6 +398,19 @@ static void handleKey(Key k) {
       else if (i.k == 'd') { if (kb.text.length() < 8) uiToast("AT LEAST 8 CHARACTERS"); else startJoin(pending.ssid, kb.text, pending.sec, S_WIFIMETHOD); }
       break;
     }
+    case S_PIN:
+      if (k == K_UP || k == K_DOWN) { pin.d[pin.pos] = (pin.d[pin.pos] + (k == K_UP ? 1 : 9)) % 10; break; }
+      if (k == K_HOLD) { if (pin.pos > 0) pin.pos--; else go(S_SETTINGS); break; }
+      if (k != K_PUSH) break;
+      if (++pin.pos < 4) { pin.d[pin.pos] = 0; break; }
+      {
+        String code; for (uint8_t d : pin.d) code += char('0' + d);
+        if (pin.stage == 0) { pin = PinPad(); pin.stage = 1; pin.first = code; break; }
+        if (code != pin.first) { pin = PinPad(); uiToast("NOT THE SAME \xC2\xB7 TRY AGAIN"); break; }
+        { Guard g; gSet.pin = code; gSet.pinOn = true; } settingsSave();
+        uiToast("PIN SET \xC2\xB7 ASKED AT START"); scr = S_SETTINGS;
+      }
+      break;
     case S_QR:
       if (k == K_HOLD) { endQR(); scr = qrPurpose == 'w' ? S_WIFIMETHOD : S_WHISPER; }
       else if (k == K_PUSH && qrPurpose == 'w') { endQR(); kb.text = ""; kb.set = 0; kb.pos = 6; scr = S_KEYBOARD; }
@@ -484,6 +507,7 @@ static String crumbs() {
     case S_KEYBOARD: segs = {"SETTINGS", "WI-FI", "ADD", ps, "PASSWORD"}; break;
     case S_WHISPER: segs = {"SETTINGS", "WHISPER"}; break;
     case S_HOTSPOT: segs = {"SETTINGS", "LOCAL NETWORK"}; break;
+    case S_PIN: segs = {"SETTINGS", "PIN"}; break;
     case S_QR: segs = qrPurpose != 'w' ? std::vector<String>{"SETTINGS", "WHISPER", "PHONE"} : std::vector<String>{"SETTINGS", "WI-FI", ps, "PHONE"}; break;
     case S_PROG: segs = gProg.kind == 't' ? std::vector<String>{"SETTINGS", "WHISPER", "TEST"} : std::vector<String>{"SETTINGS", "WI-FI", "CONNECT"}; break;
     default: break;
@@ -611,6 +635,24 @@ static void drawKeyboard() {
 }
 
 #ifdef HAVE_QR
+// Four boxes: digits already entered show as a dot, the current one shows its digit.
+static void drawPinPad(const String& head, const String& sub, const uint8_t* d, int pos, const String& msg) {
+  int y = BY + 48;
+  drawText(36, y, head, F_SERIF_XL);
+  y += textAsc(F_SERIF_XL) + 24;
+  for (auto& l : wrapText(sub, F_MONO_S, W - 72, 2)) { drawText(36, y, l, F_MONO_S, 2); y += textAsc(F_MONO_S) + 10; }
+  const int bw = 84, bh = 120, gap = 20, bx = (W - 4 * bw - 3 * gap) / 2, by = y + 60;
+  for (int i = 0; i < 4; i++) {
+    int x = bx + i * (bw + gap);
+    boxR(x, by, bw, bh, i == pos ? 5 : 2);
+    if (i < pos) discR(x + bw / 2, by + bh / 2, 12, true);
+    else if (i == pos) { String c(char('0' + d[i])); drawText(x + (bw - textW(c, F_MONO_XXL)) / 2, mid(by, bh, F_MONO_XXL), c, F_MONO_XXL);
+                         drawText(x + (bw - textW("\xE2\x96\xB2", F_MONO_S)) / 2, by - 30, "\xE2\x96\xB2", F_MONO_S);
+                         drawText(x + (bw - textW("\xE2\x96\xBC", F_MONO_S)) / 2, by + bh + 14, "\xE2\x96\xBC", F_MONO_S); }
+  }
+  if (msg.length()) { int mw = textW(msg, F_MONO_S, 2), my = by + bh + 70; fillR((W - mw) / 2 - 16, my - 10, mw + 32, textAsc(F_MONO_S) + 20); drawText((W - mw) / 2, my, msg, F_MONO_S, 2, 0, 0); }
+}
+
 static uint8_t qrBits[177 * 177 / 8 + 1]; static int qrN = 0; static String qrFor;
 static void qrCb(esp_qrcode_handle_t q) {
   qrN = esp_qrcode_get_size(q); memset(qrBits, 0, sizeof qrBits);
@@ -809,6 +851,7 @@ static std::vector<String> hints() {
   switch (scr) {
     case S_HOME: return {"\xE2\x96\xB2\xE2\x96\xBC SELECT", "PUSH OPEN"};
     case S_KEYBOARD: return {"\xE2\x96\xB2\xE2\x96\xBC CHOOSE", "PUSH ADD", "HOLD CANCEL"};
+    case S_PIN: return {"\xE2\x96\xB2\xE2\x96\xBC DIGIT", "PUSH NEXT", pin.pos ? "HOLD BACK" : "HOLD CANCEL"};
     case S_QR: return qrPurpose == 'w' ? std::vector<String>{"PUSH TYPE HERE INSTEAD", "HOLD CANCEL"} : std::vector<String>{"HOLD CANCEL"};
     case S_PROG: { Guard g; if (gProg.done) return {"PUSH DONE"}; if (!gProg.running) return {gProg.kind == 't' ? "PUSH TRY AGAIN" : "PUSH BACK", "HOLD BACK"}; return {"HOLD CANCEL"}; }
     case S_RECORD: return {recLive().paused ? "PUSH RESUME" : "PUSH PAUSE", "\xE2\x96\xB2\xE2\x96\xBC MARK", "HOLD SAVE"};
@@ -849,6 +892,7 @@ static void render() {
   switch (scr) {
     case S_HOME: drawHome(); break;
     case S_KEYBOARD: drawKeyboard(); break;
+    case S_PIN: drawPinPad(pin.stage ? "Repeat the PIN" : "New PIN", pin.stage ? "ENTER THE SAME 4 DIGITS AGAIN" : "4 DIGITS" + String(DOT) + "ASKED EVERY TIME IT IS SWITCHED ON", pin.d, pin.pos, ""); break;
     case S_QR: drawQR(); break;
     case S_PROG: drawProg(); break;
     case S_RECORD: drawRecord(); break;
@@ -893,28 +937,90 @@ void uiSleepScreen(char why) {
   bool b = why == 'B', o = why == 'O';
   drawText(22, mid(0, 46, F_MONO_S), b ? "BATTERY EMPTY" : o ? "SWITCHED OFF" : "ASLEEP", F_MONO_S, 2);
   fillR(0, 46, W, 2);
-  // big inverted band: readable from across the room
-  const char* word = b ? "EMPTY" : o ? "OFF" : "ASLEEP";
-  int bandY = BY + 32, bandH = 168;
-  fillR(0, bandY, W, bandH);
-  drawText((W - textW(word, F_MONO_XXL)) / 2, mid(bandY, bandH, F_MONO_XXL), word, F_MONO_XXL, 0, 0, 0);
-  int y = bandY + bandH + 36;
+  int y = BY + 56;
   drawText(72, y, b ? "Battery empty" : o ? "Switched off" : "Asleep", F_SERIF_XL);
-  y += textAsc(F_SERIF_XL) + 28;
-  String l1 = b ? "CONNECT USB-C TO CHARGE" : String("SINCE ") + (clockValid() ? String(clk) : String("--:--")) + (pct >= 0 ? String(DOT) + "BATTERY " + pct + "%" : String());
-  drawText(72, y, l1, F_MONO_S, 2, W - 72 - 32);
-  y += textAsc(F_MONO_S) + 14;
-  drawText(72, y, b ? "THE RECORDING WAS SAVED" : "NOT RECORDING" + String(DOT) + "WI-FI OFF", F_MONO_S, 2, W - 72 - 32);
-  y += textAsc(F_MONO_S) + 14;
-  if (!b && !o) drawText(72, y, gSet.sleepMin ? "AFTER " + String(gSet.sleepMin) + " MIN WITHOUT USE" : String("TO SAVE THE BATTERY"), F_MONO_S, 2, W - 72 - 32);
+  y += textAsc(F_SERIF_XL) + 24;
+  drawText(72, y, b ? "THE RECORDING WAS SAVED" : !o && gSet.sleepMin ? "AFTER " + String(gSet.sleepMin) + " MIN WITHOUT USE" : "NOT RECORDING" + String(DOT) + "WI-FI OFF", F_MONO_S, 2, W - 72 - 32);
+  y += textAsc(F_MONO_S) + 40;
+  // what is worth knowing while it lies in a drawer: since when, battery, room left for recordings
+  int local = 0; for (auto& r : gRecs) if (r.status == REC_LOCAL) local++;
+  String freeV = "NO STORAGE";
+  if (gFS) { uint64_t t = storageTotal(), u = storageUsed(), f = t > u ? t - u : 0;
+             freeV = gSdOk ? String(f / 1e9, 1) + " GB FREE OF " + String(t / 1e9, 0) + " GB" : String(f / 1e6, 0) + " MB FREE OF " + String(t / 1e6, 0) + " MB"; }
+  struct { const char* label; String value; } rows[] = {
+    {b ? "EMPTY SINCE" : o ? "OFF SINCE" : "ASLEEP SINCE", clockValid() ? String(DAYL[tm.tm_wday]) + " " + tm.tm_mday + " " + MONL[tm.tm_mon] + DOT + clk : String("Date unknown")},
+    {"BATTERY", b ? String("Empty") : pct >= 0 ? String(pct) + "%" : String("No battery")},
+    {gSdOk ? "SD CARD" : "INTERNAL STORAGE", freeV},
+    {"RECORDINGS", String(gRecs.size()) + (local ? String(DOT) + local + " NOT SENT" : String())},
+  };
+  for (auto& r : rows) {
+    fillR(72, y, W - 72 - 32, 1);
+    y += 14;
+    drawText(72, y, r.label, F_MONO_S, 2);
+    y += textAsc(F_MONO_S) + 10;
+    drawText(72, y, r.value, F_SERIF_M, 0, W - 72 - 32);
+    y += textAsc(F_SERIF_M) + 18;
+  }
   int la = textAsc(F_SERIF_XL), ty = BY + BH - 44 - 136 + (136 - (la + 16 + textAsc(F_MONO_S))) / 2;
   marker(22, ty + la / 2);
   drawText(72, ty, b ? "Charge" : o ? "Press PWR" : "Push", F_SERIF_XL);
-  drawText(72, ty + la + 16, b ? "IT STARTS BY ITSELF ON THE CHARGER" : o ? "TO SWITCH IT ON AGAIN" : "ANY DIRECTION OR A CHARGER WAKES IT", F_MONO_S, 2, W - 72 - 32);
+  String how = b ? "IT STARTS BY ITSELF ON THE CHARGER" : o ? "TO SWITCH IT ON AGAIN" : "ANY DIRECTION OR A CHARGER WAKES IT";
+  if (gSet.pinOn) how = b ? "THEN ENTER THE PIN" : o ? "THEN ENTER THE PIN" : "ANY DIRECTION, THEN THE PIN";
+  drawText(72, ty + la + 16, how, F_MONO_S, 2, W - 72 - 32);
   drawHints({b ? "CHARGE FIRST" : o ? "PWR SWITCHES ON" : "PUSH TO WAKE"});
   dispRequestFull(b ? "EMPTY" : o ? "OFF" : "SLEEP");
   dispCommit(true);
   dispHibernate();
+}
+
+// Start-up PIN: runs in setup() before Wi-Fi and the web interface come up, so nothing is reachable while
+// locked. A software restart (update installed, restart from the web page) was unlocked already and skips it.
+// Forgotten PIN: send "RESETPIN" over USB serial while this screen shows.
+void uiPinGate() {
+  String code; bool on; { Guard g; on = gSet.pinOn; code = gSet.pin; }
+  if (!on || code.length() != 4 || esp_reset_reason() == ESP_RST_SW) return;
+  Serial.println("[pin] locked, waiting for the PIN");
+  struct B { uint8_t pin; bool stable = false, last = false; uint8_t cnt = 0; } up{PIN_BTN_UP}, dn{PIN_BTN_DOWN}, pu{PIN_BTN_PUSH};
+  B* all[] = {&up, &dn, &pu};
+  for (auto* b : all) pinMode(b->pin, INPUT_PULLUP);
+  uint8_t d[4] = {0}; int pos = 0, wrong = 0; uint32_t puAt = 0, waitUntil = 0, lastKey = millis(), lastPwr = 0; bool hold = false, dirty = true, first = true;
+  String msg, ser;
+  for (;;) {
+    uint32_t now = millis();
+    for (auto* b : all) { bool raw = digitalRead(b->pin) == LOW; if (raw == b->stable) b->cnt = 0; else if (++b->cnt >= 2) { b->stable = raw; b->cnt = 0; } }
+    bool uP = up.stable && !up.last, dP = dn.stable && !dn.last;
+    if (BTN_SWAP_UPDOWN) std::swap(uP, dP);
+    bool locked = waitUntil && (int32_t)(waitUntil - now) > 0;
+    if (waitUntil && !locked) { waitUntil = 0; msg = ""; dirty = true; }
+    if (uP || dP) { lastKey = now; if (!locked) { d[pos] = (d[pos] + (uP ? 1 : 9)) % 10; dirty = true; } }
+    if (pu.stable && !pu.last) { puAt = now; hold = false; lastKey = now; }
+    if (pu.stable && !hold && now - puAt >= HOLD_MS) { hold = true; if (pos > 0 && !locked) { pos--; dirty = true; } }
+    if (!pu.stable && pu.last && !hold && !locked) {
+      dirty = true;
+      if (++pos == 4) {
+        String e; for (uint8_t x : d) e += char('0' + x);
+        if (e == code) { Serial.println("[pin] unlocked"); powerActivity(); return; }
+        wrong++; pos = 0; memset(d, 0, sizeof d);
+        Serial.printf("[pin] wrong PIN (%d)\n", wrong);
+        if (wrong % 3 == 0) { uint32_t s = 30UL << min(wrong / 3 - 1, 5); waitUntil = now + s * 1000; msg = "WRONG PIN" + String(DOT) + "WAIT " + String(s) + " S"; }
+        else msg = "WRONG PIN" + String(DOT) + String(3 - wrong % 3) + (3 - wrong % 3 == 1 ? " TRY LEFT" : " TRIES LEFT");
+      } else d[pos] = 0;
+    }
+    for (auto* b : all) b->last = b->stable;
+    while (Serial.available()) { char c = Serial.read(); if (c == '\n' || c == '\r') { ser.trim(); if (ser == "RESETPIN") { { Guard g; gSet.pinOn = false; gSet.pin = ""; } settingsSave(); Serial.println("[pin] PIN removed over USB"); return; } ser = ""; } else if (ser.length() < 16) ser += c; }
+    if (now - lastPwr >= 200) { lastPwr = now; if (boardPwrKey() == 'L' && !boardVbus()) powerOff(); }
+    if (!boardVbus() && now - lastKey > 60000UL) powerSleep('S');   // nobody there: do not drain the battery
+    if (dirty) {
+      dispClear();
+      drawText(22, mid(0, 46, F_MONO_S), "LOCKED", F_MONO_S, 2);
+      fillR(0, 46, W, 2);
+      drawPinPad("Enter PIN", locked ? String("TOO MANY WRONG TRIES") : String("PICK EACH DIGIT WITH THE ROCKER"), d, locked ? -1 : pos, msg);
+      drawHints(locked ? std::vector<String>{"WAIT"} : std::vector<String>{"\xE2\x96\xB2\xE2\x96\xBC DIGIT", "PUSH NEXT", "HOLD BACK"});
+      if (first) dispRequestFull("PIN");
+      dispCommit(first); first = dirty = false;
+    }
+    delay(12);
+  }
 }
 
 void uiBegin() {

@@ -37,7 +37,7 @@ static void hState() {
   d["ota"]["checking"] = gUpd.checking; d["ota"]["installing"] = gUpd.installing; d["ota"]["avail"] = gUpd.avail; d["ota"]["latest"] = gUpd.latest;
   d["ota"]["notes"] = gUpd.notes; d["ota"]["err"] = gUpd.err; d["ota"]["checked"] = gUpd.checkedAt; d["ota"]["pct"] = gUpd.pct;
   JsonObject dev = d["dev"].to<JsonObject>();
-  dev["auto"] = gSet.autoSend; dev["fullEvery"] = gSet.fullEvery; dev["batt"] = batteryPercent(); dev["usb"] = boardVbus(); dev["mv"] = batteryMv(); dev["sleepMin"] = gSet.sleepMin; dev["vol"] = gSet.volume;
+  dev["auto"] = gSet.autoSend; dev["fullEvery"] = gSet.fullEvery; dev["batt"] = batteryPercent(); dev["usb"] = boardVbus(); dev["mv"] = batteryMv(); dev["sleepMin"] = gSet.sleepMin; dev["vol"] = gSet.volume; dev["pinOn"] = gSet.pinOn;
   dev["used"] = (double)storageUsed(); dev["total"] = (double)storageTotal(); dev["sd"] = gSdOk; dev["partials"] = gPartials; dev["fulls"] = gFulls;
   JsonObject w = d["wifi"].to<JsonObject>();
   w["on"] = gSet.wifiOn; w["connected"] = ssid; w["ip"] = ip; w["scanning"] = netScanning();
@@ -241,6 +241,12 @@ static void hDevice() {
   if (d["auto"].is<bool>()) gSet.autoSend = d["auto"];
   if (d["sleepMin"].is<int>()) gSet.sleepMin = constrain(d["sleepMin"].as<int>(), 0, 240);
   if (d["fullEvery"].is<int>()) gSet.fullEvery = constrain(d["fullEvery"].as<int>(), 5, 200);
+  if (d["pin"].is<const char*>()) {   // "1234" sets and turns on the start-up PIN, "" turns it off
+    String p = d["pin"].as<String>();
+    bool digits = p.length() == 4; for (char c : p) if (c < '0' || c > '9') digits = false;
+    if (p.length() && !digits) return fail("PIN MUST BE 4 DIGITS");
+    gSet.pin = p; gSet.pinOn = digits;
+  }
   if (d["vol"].is<int>()) { gSet.volume = constrain(d["vol"].as<int>(), 0, 100); audioSetVolume(gSet.volume); }
   settingsSave(); uiPoke(); ok();
 }

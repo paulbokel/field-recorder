@@ -60,6 +60,7 @@ struct Settings {
   bool wifiOn = true; std::vector<SavedNet> nets;
   bool hsOn = false; String hsName, hsPw;
   uint8_t whSvc = 0; String whKey, whServer, whSrvKey, whOaModel, whSrvModel, whMiKey, whMiModel; uint8_t whModel = 0, whLang = 0; bool whOk = false, whSpk = true;
+  bool pinOn = false; String pin;   // start-up PIN: 4 digits, asked on every start except a software restart
   bool autoSend = false; uint16_t fullEvery = 30; uint16_t sleepMin = SLEEP_MIN_DEFAULT; uint8_t volume = 100; uint32_t nextId = 1;
 };
 extern Settings gSet;
@@ -198,6 +199,7 @@ void uiLoop();
 void uiPoke();
 void uiToast(const String& m);
 void uiSleepScreen(char why);
+void uiPinGate();       // blocks in setup() until the start-up PIN is entered (when one is set)
 
 // ---- web.cpp
 void webBegin();

@@ -42,6 +42,7 @@ void setup() {
   reportsBegin();
   if (!audioBegin()) Serial.println("[audio] I2S/codec init failed");
   audioSetVolume(gSet.volume);
+  uiPinGate();
   netBegin();
   webBegin();
   uiBegin();
