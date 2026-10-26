@@ -1,5 +1,6 @@
-# Builds the firmware on every push. A tag like v1.2.0 also publishes a GitHub release with
-# firmware.bin + manifest.json, which devices pick up by themselves (Settings > Firmware).
+# Builds the firmware on every push. Publishing a version (Actions > Firmware > Run workflow, or pushing a
+# tag like v1.2.0) also makes a GitHub release with firmware.bin + manifest.json, which devices pick up
+# by themselves (Settings > Firmware).
 name: Firmware
 
 on:
@@ -7,6 +8,14 @@ on:
     branches: [main]
     tags: ['v*']
   pull_request:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish, e.g. 1.2.0'
+        required: true
+      notes:
+        description: 'Short note shown on the device'
+        required: false
 
 permissions:
   contents: write
@@ -30,14 +39,24 @@ jobs:
 
       - name: Version
         id: v
+        env:
+          IN_VERSION: ${{ inputs.version }}
+          IN_NOTES: ${{ inputs.notes }}
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            V="${IN_VERSION#v}"; N="$IN_NOTES"
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             V="${GITHUB_REF_NAME#v}"
-            [[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::tag must look like v1.2.3"; exit 1; }
+            N=$(git tag -l --format='%(contents:subject)' "$GITHUB_REF_NAME" | head -1)
           else
             V="$(sed -n 's/.*#define FW_VERSION "\(.*\)".*/\1/p' src/config.h)-dev"
           fi
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch || "$GITHUB_REF" == refs/tags/v* ]]; then
+            [[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::version must look like 1.2.3"; exit 1; }
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
           echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "notes=$N" >> "$GITHUB_OUTPUT"
 
       - name: Build
         env:
@@ -45,13 +64,14 @@ jobs:
         run: pio run
 
       - name: Collect
+        env:
+          NOTES: ${{ steps.v.outputs.notes }}
         run: |
           B=.pio/build/field-recorder
           mkdir out
           cp $B/firmware.bin $B/bootloader.bin $B/partitions.bin out/
           SIZE=$(stat -c %s out/firmware.bin)
           [ "$SIZE" -le 2097152 ] || { echo "::error::firmware.bin is $SIZE bytes, the app slot is 2 MB"; exit 1; }
-          NOTES=$(git tag -l --format='%(contents:subject)' "$GITHUB_REF_NAME" 2>/dev/null | head -1)
           jq -n --arg v "${{ steps.v.outputs.version }}" --argjson s "$SIZE" --arg n "$NOTES" \
             '{version: $v, size: $s, notes: $n}' > out/manifest.json
           cat out/manifest.json
@@ -63,9 +83,13 @@ jobs:
           path: out/
 
       - name: Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: steps.v.outputs.release == 'true'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ steps.v.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ steps.v.outputs.version }}
+          body: ${{ steps.v.outputs.notes }}
           files: |
             out/firmware.bin
             out/manifest.json

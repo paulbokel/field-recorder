@@ -20,7 +20,7 @@ The app area is split into two 2 MB slots. An update is written into the slot th
 - **From GitHub (any network):** the device checks the latest release of `UPDATE_REPO` (see `src/config.h`) about 20 s after going online and every 6 hours. When there is a newer version, the home screen header shows `UPDATE x.y.z` and *Settings → Firmware* offers to install it. The web interface has the same under *Device → Firmware*.
 - **From a file:** *Device → Firmware → Install from a file* in the web interface takes a `firmware.bin`.
 
-To publish a version: commit, then `git tag -a v1.2.0 -m "What changed"` and `git push origin v1.2.0`. The *Firmware* workflow builds it with that version number and attaches `firmware.bin` and `manifest.json` to a release. The tag message becomes the note shown on the device. The repository must stay public so devices can download without a token.
+To publish a version: push your changes, then on GitHub open *Actions → Firmware → Run workflow*, fill in the version (for example `1.2.0`, higher than the last one) and a short note. The workflow builds it with that version number and makes release `v1.2.0` with `firmware.bin` and `manifest.json`; the note is shown on the device. Pushing a tag `v1.2.0` does the same, with the tag message as the note. The repository must stay public so devices can download without a token.
 
 Switching an older device (one app slot) to this layout needs one USB flash of bootloader, partition table and app, with `otadata` erased: `pio run -t upload` does that, or flash `bootloader.bin` at 0x0, `partitions.bin` at 0x8000 and `firmware.bin` at 0x10000 and erase 0xe000-0xffff. Settings (NVS) and the internal FAT stay where they are.
 
