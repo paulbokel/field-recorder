@@ -1,7 +1,7 @@
 #pragma once
 // ---- Field Recorder · board + behaviour configuration ----
 #ifndef FW_VERSION
-#define FW_VERSION "1.2.0"   // release builds pass the git tag instead (-DFW_VERSION=...)
+#define FW_VERSION "1.4.0"   // release builds pass the git tag instead (-DFW_VERSION=...)
 #endif
 
 // Updates: GitHub releases of this (public) repo. Each release carries firmware.bin and manifest.json.
