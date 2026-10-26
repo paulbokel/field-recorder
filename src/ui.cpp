@@ -948,7 +948,7 @@ void uiSleepScreen(char why) {
   if (gFS) { uint64_t t = storageTotal(), u = storageUsed(), f = t > u ? t - u : 0;
              freeV = gSdOk ? String(f / 1e9, 1) + " GB FREE OF " + String(t / 1e9, 0) + " GB" : String(f / 1e6, 0) + " MB FREE OF " + String(t / 1e6, 0) + " MB"; }
   struct { const char* label; String value; } rows[] = {
-    {b ? "EMPTY SINCE" : o ? "OFF SINCE" : "ASLEEP SINCE", clockValid() ? String(DAYL[tm.tm_wday]) + " " + tm.tm_mday + " " + MONL[tm.tm_mon] + DOT + clk : String("Date unknown")},
+    {b ? "EMPTY SINCE" : o ? "OFF SINCE" : "ASLEEP SINCE", clockValid() ? String(DAYL[tm.tm_wday]).substring(0, 3) + " " + tm.tm_mday + " " + String(MONL[tm.tm_mon]).substring(0, 3) + " " + (tm.tm_year + 1900) + DOT + clk : String("Date unknown")},
     {"BATTERY", b ? String("Empty") : pct >= 0 ? String(pct) + "%" : String("No battery")},
     {gSdOk ? "SD CARD" : "INTERNAL STORAGE", freeV},
     {"RECORDINGS", String(gRecs.size()) + (local ? String(DOT) + local + " NOT SENT" : String())},
@@ -983,8 +983,12 @@ void uiPinGate() {
   struct B { uint8_t pin; bool stable = false, last = false; uint8_t cnt = 0; } up{PIN_BTN_UP}, dn{PIN_BTN_DOWN}, pu{PIN_BTN_PUSH};
   B* all[] = {&up, &dn, &pu};
   for (auto* b : all) pinMode(b->pin, INPUT_PULLUP);
-  uint8_t d[4] = {0}; int pos = 0, wrong = 0; uint32_t puAt = 0, waitUntil = 0, lastKey = millis(), lastPwr = 0; bool hold = false, dirty = true, first = true;
+  uint8_t d[4] = {0}; int pos = 0, wrong; uint32_t puAt = 0, waitUntil = 0, lastKey = millis(), lastPwr = 0; bool hold = false, dirty = true, first = true;
   String msg, ser;
+  // the wrong-try counter is kept in flash, so sleeping or switching off does not cancel a wait: it starts over
+  auto penalty = [&](uint32_t now) { uint32_t s = 30UL << min(wrong / 3 - 1, 5); waitUntil = now + s * 1000; msg = "WRONG PIN" + String(DOT) + "WAIT " + String(s) + " S"; };
+  { Guard g; wrong = gSet.pinWrong; }
+  if (wrong >= 3 && wrong % 3 == 0) penalty(millis());
   for (;;) {
     uint32_t now = millis();
     for (auto* b : all) { bool raw = digitalRead(b->pin) == LOW; if (raw == b->stable) b->cnt = 0; else if (++b->cnt >= 2) { b->stable = raw; b->cnt = 0; } }
@@ -999,15 +1003,15 @@ void uiPinGate() {
       dirty = true;
       if (++pos == 4) {
         String e; for (uint8_t x : d) e += char('0' + x);
-        if (e == code) { Serial.println("[pin] unlocked"); powerActivity(); return; }
-        wrong++; pos = 0; memset(d, 0, sizeof d);
+        if (e == code) { Serial.println("[pin] unlocked"); if (wrong) settingsPinWrong(0); powerActivity(); return; }
+        wrong = min(wrong + 1, 250); pos = 0; memset(d, 0, sizeof d); settingsPinWrong(wrong);
         Serial.printf("[pin] wrong PIN (%d)\n", wrong);
-        if (wrong % 3 == 0) { uint32_t s = 30UL << min(wrong / 3 - 1, 5); waitUntil = now + s * 1000; msg = "WRONG PIN" + String(DOT) + "WAIT " + String(s) + " S"; }
+        if (wrong % 3 == 0) penalty(now);
         else msg = "WRONG PIN" + String(DOT) + String(3 - wrong % 3) + (3 - wrong % 3 == 1 ? " TRY LEFT" : " TRIES LEFT");
       } else d[pos] = 0;
     }
     for (auto* b : all) b->last = b->stable;
-    while (Serial.available()) { char c = Serial.read(); if (c == '\n' || c == '\r') { ser.trim(); if (ser == "RESETPIN") { { Guard g; gSet.pinOn = false; gSet.pin = ""; } settingsSave(); Serial.println("[pin] PIN removed over USB"); return; } ser = ""; } else if (ser.length() < 16) ser += c; }
+    while (Serial.available()) { char c = Serial.read(); if (c == '\n' || c == '\r') { ser.trim(); if (ser == "RESETPIN") { { Guard g; gSet.pinOn = false; gSet.pin = ""; } settingsSave(); settingsPinWrong(0); Serial.println("[pin] PIN removed over USB"); return; } ser = ""; } else if (ser.length() < 16) ser += c; }
     if (now - lastPwr >= 200) { lastPwr = now; if (boardPwrKey() == 'L' && !boardVbus()) powerOff(); }
     if (!boardVbus() && now - lastKey > 60000UL) powerSleep('S');   // nobody there: do not drain the battery
     if (dirty) {

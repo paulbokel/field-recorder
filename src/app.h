@@ -60,12 +60,13 @@ struct Settings {
   bool wifiOn = true; std::vector<SavedNet> nets;
   bool hsOn = false; String hsName, hsPw;
   uint8_t whSvc = 0; String whKey, whServer, whSrvKey, whOaModel, whSrvModel, whMiKey, whMiModel; uint8_t whModel = 0, whLang = 0; bool whOk = false, whSpk = true;
-  bool pinOn = false; String pin;   // start-up PIN: 4 digits, asked on every start except a software restart
+  bool pinOn = false; String pin; uint8_t pinWrong = 0;   // start-up PIN: 4 digits, asked on every start except a software restart; wrong tries in a row
   bool autoSend = false; uint16_t fullEvery = 30; uint16_t sleepMin = SLEEP_MIN_DEFAULT; uint8_t volume = 100; uint32_t nextId = 1;
 };
 extern Settings gSet;
 void settingsLoad();
 void settingsSave();
+void settingsPinWrong(uint8_t n);   // stores only the wrong-PIN counter (survives sleep and power-off)
 String randomPw();
 String deviceName();
 String whModelName();   // model sent to the current Whisper service

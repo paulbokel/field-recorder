@@ -54,7 +54,7 @@ void settingsLoad() {
   gSet.whModel = P.getUChar("whModel", 0);
   gSet.whLang = P.getUChar("whLang", 0);
   gSet.whOk = P.getBool("whOk", false);
-  gSet.pinOn = P.getBool("pinOn", false); gSet.pin = P.getString("pin", "");
+  gSet.pinOn = P.getBool("pinOn", false); gSet.pin = P.getString("pin", ""); gSet.pinWrong = P.getUChar("pinWrong", 0);
   gSet.autoSend = P.getBool("auto", false);
   gSet.fullEvery = P.getUShort("fullEvery", 30);
   gSet.sleepMin = P.getUShort("sleepMin", SLEEP_MIN_DEFAULT);
@@ -62,6 +62,8 @@ void settingsLoad() {
   gSet.nextId = P.getULong("nextId", 1);
   if (gSet.hsPw.length() < 8) { gSet.hsPw = randomPw(); P.putString("hsPw", gSet.hsPw); }
 }
+
+void settingsPinWrong(uint8_t n) { { Guard g; gSet.pinWrong = n; } P.putUChar("pinWrong", n); }
 
 void settingsSave() {
   Guard g;
